@@ -33,13 +33,13 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
       const allergensHtml = allergens
         .map((a) => `<span class="allergen-chip">⚠️ ${escapeServerHtml(a)}</span>`)
         .join("");
-      const imgPriorityAttr = idx < 2 ? 'fetchpriority="high"' : 'loading="lazy"';
+      const imgPriorityAttr = idx === 0 ? 'fetchpriority="high"' : 'loading="lazy"';
       const pid = escapeServerHtml(p.id);
 
       return `
           <article class="product-card">
             <div class="product-img-wrap" onclick="openProductDetail('${pid}')" style="cursor:pointer;">
-              <img src="${escapeServerHtml(p.imageUrl)}" alt="${escapeServerHtml(p.name)}" width="540" height="540" decoding="async" ${imgPriorityAttr} />
+              <img src="${escapeServerHtml(p.imageUrl)}" alt="${escapeServerHtml(p.name)}" width="480" height="320" decoding="async" ${imgPriorityAttr} />
               <span class="cat-tag">${escapeServerHtml(p.category)}</span>
               <span class="stock-pill ${stockClass}">${stockText}</span>
             </div>
@@ -594,6 +594,255 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
     }
     .toast.success { border-left-color: #22c55e; }
     .toast.error { border-left-color: #ef4444; }
+
+    /* Mobile Floating Bottom Cart Bar */
+    #mobile-sticky-cart {
+      display: none;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 150;
+      background: #1c1917;
+      color: #fff;
+      padding: 12px 16px;
+      box-shadow: 0 -6px 24px rgba(0,0,0,0.28);
+      border-top: 2px solid #f59e0b;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    html, body {
+      overflow-x: hidden;
+      max-width: 100vw;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* =========================================================
+       MOBİL & TABLET DUYARLI (RESPONSIVE) OPTİMİZASYONLAR
+       ========================================================= */
+    @media (max-width: 768px) {
+      .header-inner {
+        padding: 10px 12px;
+        gap: 8px;
+      }
+      .brand {
+        gap: 8px;
+      }
+      .brand-icon {
+        width: 36px;
+        height: 36px;
+        font-size: 19px;
+        border-radius: 10px;
+      }
+      .brand-title {
+        font-size: 16.5px;
+      }
+      .brand-sub {
+        font-size: 10px;
+      }
+      .header-actions {
+        gap: 6px;
+      }
+      .cart-trigger {
+        padding: 7px 12px;
+        font-size: 12.5px;
+        gap: 5px;
+      }
+      .user-pill {
+        padding: 4px 8px;
+        font-size: 11.5px;
+        gap: 5px;
+      }
+      .user-pill strong {
+        max-width: 90px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      /* Ziyaretçi girişi yapılmadığında tek sekmeli menüyü gizle (56px kompakt başlık) */
+      body:not(.logged-in) .nav-tabs {
+        display: none;
+      }
+      body.logged-in .nav-tabs {
+        order: 3;
+        width: 100%;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        padding-top: 4px;
+        padding-bottom: 2px;
+        gap: 6px;
+      }
+      .nav-tabs::-webkit-scrollbar {
+        display: none;
+      }
+      .nav-btn {
+        flex-shrink: 0;
+        white-space: nowrap;
+        padding: 7px 12px;
+        font-size: 12.5px;
+      }
+      .hero {
+        padding: 16px 14px;
+      }
+      .hero h1 {
+        font-size: 19.5px;
+        line-height: 1.25;
+        margin-bottom: 6px;
+      }
+      .hero p {
+        font-size: 12.5px;
+        line-height: 1.45;
+      }
+      .hero-badges {
+        margin-top: 10px;
+        gap: 6px;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        padding-bottom: 2px;
+      }
+      .hero-badges::-webkit-scrollbar {
+        display: none;
+      }
+      .hero-badge {
+        flex-shrink: 0;
+        white-space: nowrap;
+        font-size: 11px;
+        padding: 4px 10px;
+      }
+      main {
+        padding: 14px 12px 84px;
+      }
+      .filter-bar {
+        padding: 10px 12px;
+        gap: 10px;
+        margin-bottom: 14px;
+        border-radius: 12px;
+      }
+      .category-pills {
+        width: 100%;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        padding-bottom: 2px;
+        gap: 6px;
+      }
+      .category-pills::-webkit-scrollbar {
+        display: none;
+      }
+      .cat-pill {
+        flex-shrink: 0;
+        white-space: nowrap;
+        padding: 8px 13px;
+        font-size: 12.5px;
+      }
+      /* 16px font iOS Safari'de otomatik yakınlaştırmayı (auto-zoom) önler */
+      .search-input {
+        width: 100%;
+        min-width: 0;
+        font-size: 16px;
+        padding: 10px 14px;
+      }
+      .product-grid {
+        grid-template-columns: 1fr;
+        gap: 14px;
+      }
+      .product-img-wrap {
+        height: 185px;
+      }
+      .product-body {
+        padding: 14px;
+        gap: 6px;
+      }
+      .product-title {
+        font-size: 16px;
+      }
+      .product-footer {
+        padding: 10px 14px 14px;
+        flex-wrap: wrap;
+      }
+      .product-footer .btn {
+        min-height: 40px;
+        padding: 8px 13px;
+        font-size: 13px;
+      }
+      .panel-card {
+        padding: 14px 12px;
+        border-radius: 12px;
+      }
+      .stats-grid {
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+      .stat-card {
+        padding: 12px;
+      }
+      .stat-value {
+        font-size: 18px;
+      }
+      /* Tüm formları mobilde tek sütun ve dokunmatik uyumlu (44px / 16px) yap */
+      .form-grid {
+        grid-template-columns: 1fr !important;
+        gap: 10px;
+      }
+      .form-control {
+        font-size: 16px;
+        min-height: 44px;
+        padding: 10px 12px;
+      }
+      /* Tabloları mobilde yatay kaydırılabilir yap */
+      table {
+        display: block;
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        white-space: nowrap;
+        font-size: 12.5px;
+      }
+      th, td {
+        padding: 8px 10px;
+      }
+      /* Modalları mobilde alt çekmece (Bottom Sheet) görünümüne kavuştur */
+      .modal-backdrop {
+        align-items: flex-end;
+        padding: 0;
+      }
+      .modal-box {
+        border-radius: 20px 20px 0 0;
+        max-height: 92vh;
+        padding: 18px 14px 26px;
+        max-width: 100%;
+      }
+      #toast-container {
+        left: 12px;
+        right: 12px;
+        bottom: 74px;
+      }
+      .toast {
+        max-width: 100%;
+        width: 100%;
+        font-size: 13px;
+      }
+      body.has-cart-items #mobile-sticky-cart {
+        display: flex;
+      }
+    }
+
+    @media (max-width: 400px) {
+      .brand-sub {
+        display: none;
+      }
+      .stats-grid {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
@@ -947,6 +1196,20 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
 
   <div id="toast-container"></div>
 
+  <!-- MOBİL SABİT ALT SEPET ÇUBUĞU -->
+  <div id="mobile-sticky-cart" onclick="openCartModal()">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span style="background:#d97706;color:#fff;width:34px;height:34px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;font-size:17px;">🛒</span>
+      <div>
+        <div id="mobile-cart-summary" style="font-size:13px;font-weight:800;color:#fff;">Sepetiniz (0 Ürün)</div>
+        <div id="mobile-cart-total" style="font-size:12px;color:#fcd34d;font-weight:700;">0,00 ₺</div>
+      </div>
+    </div>
+    <button type="button" class="btn btn-primary btn-sm" style="padding:9px 14px;font-size:13px;border-radius:999px;">
+      Sepeti Onayla →
+    </button>
+  </div>
+
   <script>
     let state = {
       user: null,
@@ -1003,6 +1266,18 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
       localStorage.setItem('evyemek_cart', JSON.stringify(state.cart));
       const totalQty = state.cart.reduce((s, i) => s + i.quantity, 0);
       document.getElementById('cart-count').textContent = totalQty;
+      document.body.classList.toggle('has-cart-items', totalQty > 0);
+      const mobSummary = document.getElementById('mobile-cart-summary');
+      const mobTotal = document.getElementById('mobile-cart-total');
+      if (mobSummary && mobTotal) {
+        let totalKurus = 0;
+        for (const item of state.cart) {
+          const p = (state.products || []).find(x => x.id === item.productId);
+          if (p) totalKurus += p.priceKurus * item.quantity;
+        }
+        mobSummary.textContent = \`Sepetinizde \${totalQty} ürün var\`;
+        mobTotal.textContent = \`Toplam: \${formatKurus(totalKurus)}\`;
+      }
     }
 
     async function initApp() {
@@ -1030,6 +1305,8 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
       const emailsBtn = document.getElementById('nav-emails');
       const profileBtn = document.getElementById('nav-profile');
       const adminBtn = document.getElementById('nav-admin');
+
+      document.body.classList.toggle('logged-in', Boolean(state.user));
 
       if (state.user) {
         ordersBtn.style.display = 'inline-flex';
@@ -1160,12 +1437,12 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
         const stockClass = p.dailyStock === 0 ? 'stock-out' : (p.dailyStock <= 5 ? 'stock-low' : 'stock-ok');
         const stockText = p.dailyStock === 0 ? 'Bugün Tükendi' : (p.dailyStock <= 5 ? \`Son \${p.dailyStock} Porsiyon!\` : \`Günlük Stok: \${p.dailyStock}\`);
         const allergensHtml = (p.allergens || []).map(a => \`<span class="allergen-chip">⚠️ \${escapeHtml(a)}</span>\`).join('');
-        const imgPriority = idx < 2 ? 'fetchpriority="high"' : 'loading="lazy"';
+        const imgPriority = idx === 0 ? 'fetchpriority="high"' : 'loading="lazy"';
 
         return \`
           <article class="product-card">
             <div class="product-img-wrap" onclick="openProductDetail('\${p.id}')" style="cursor:pointer;">
-              <img src="\${escapeHtml(p.imageUrl)}" alt="\${escapeHtml(p.name)}" width="540" height="540" decoding="async" \${imgPriority} />
+              <img src="\${escapeHtml(p.imageUrl)}" alt="\${escapeHtml(p.name)}" width="480" height="320" decoding="async" \${imgPriority} />
               <span class="cat-tag">\${escapeHtml(p.category)}</span>
               <span class="stock-pill \${stockClass}">\${stockText}</span>
             </div>
@@ -1201,26 +1478,26 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
 
       document.getElementById('modal-product-detail-content').innerHTML = \`
         <div class="modal-header">
-          <h3 style="font-size:20px;font-weight:800;">\${escapeHtml(p.name)}</h3>
+          <h3 style="font-size:18px;font-weight:800;">\${escapeHtml(p.name)}</h3>
           <button class="btn btn-sm btn-outline" onclick="closeModal('modal-product-detail')">✕</button>
         </div>
-        <div style="border-radius:12px;overflow:hidden;height:240px;margin-bottom:16px;">
-          <img src="\${escapeHtml(p.imageUrl)}" style="width:100%;height:100%;object-fit:cover;" />
+        <div style="border-radius:12px;overflow:hidden;height:210px;margin-bottom:14px;">
+          <img src="\${escapeHtml(p.imageUrl)}" alt="\${escapeHtml(p.name)}" width="480" height="320" style="width:100%;height:100%;object-fit:cover;" />
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
           <span class="status-badge status-PAID">\${escapeHtml(p.category)}</span>
-          <span style="font-size:24px;font-weight:900;color:var(--primary);">\${p.priceFormatted}</span>
+          <span style="font-size:22px;font-weight:900;color:var(--primary);">\${p.priceFormatted}</span>
         </div>
-        <p style="font-size:14.5px;line-height:1.65;margin-bottom:16px;color:var(--text);">\${escapeHtml(p.description)}</p>
-        <div style="background:var(--surface-alt);padding:14px;border-radius:10px;font-size:13.5px;margin-bottom:16px;display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <p style="font-size:14px;line-height:1.6;margin-bottom:14px;color:var(--text);">\${escapeHtml(p.description)}</p>
+        <div class="form-grid" style="background:var(--surface-alt);padding:12px;border-radius:10px;font-size:13px;margin-bottom:16px;gap:8px;">
           <div><strong>⚖️ Porsiyon / Gramaj:</strong> \${escapeHtml(p.portionInfo)}</div>
           <div><strong>⏱️ Hazırlanma Süresi:</strong> \${p.prepTimeMinutes} Dakika</div>
           <div><strong>🍲 Günlük Kalan Stok:</strong> \${p.dailyStock} Porsiyon</div>
           <div><strong>🛡️ Alerjen Bilgisi:</strong> \${allergensHtml}</div>
         </div>
-        <div style="display:flex;justify-content:flex-end;gap:10px;">
-          <button class="btn btn-outline" onclick="closeModal('modal-product-detail')">Kapat</button>
-          <button class="btn btn-primary" \${p.dailyStock <= 0 ? 'disabled' : ''} onclick="addToCart('\${p.id}', 1); closeModal('modal-product-detail');">
+        <div style="display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;">
+          <button class="btn btn-outline" style="flex:1;min-height:42px;" onclick="closeModal('modal-product-detail')">Kapat</button>
+          <button class="btn btn-primary" style="flex:2;min-height:42px;" \${p.dailyStock <= 0 ? 'disabled' : ''} onclick="addToCart('\${p.id}', 1); closeModal('modal-product-detail');">
             🛒 Sepete Ekle (\${p.priceFormatted})
           </button>
         </div>
