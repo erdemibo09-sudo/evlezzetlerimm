@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { Buffer } from "node:buffer";
-import { generateId, hashPassword } from "../services/cryptoUtils.ts";
+import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { generateId, getEnv, hashPassword } from "../services/cryptoUtils.ts";
 
 let defaultDbInstance: DatabaseSync | null = null;
 
@@ -30,20 +31,21 @@ function createFoodSvgDataUri(title: string, emoji: string, bgStart: string, bgE
  * Böylece sunucu yeniden başlatılmasa veya farklı dizinden çalıştırılsa bile görseller %100 garantili görünür.
  */
 function loadUploadedPhotoDataUri(filename: string, fallbackTitle: string): string {
-  try {
-    const fileUrl = new URL(`../../public/uploads/${filename}`, import.meta.url);
-    const bytes = Deno.readFileSync(fileUrl);
-    const b64 = Buffer.from(bytes).toString("base64");
-    return `data:image/jpeg;base64,${b64}`;
-  } catch {
+  const candidatePaths = [
+    new URL(`../../public/uploads/${filename}`, import.meta.url),
+    new URL(`../public/uploads/${filename}`, import.meta.url),
+    `./public/uploads/${filename}`,
+  ];
+  for (const p of candidatePaths) {
     try {
-      const bytes = Deno.readFileSync(`./public/uploads/${filename}`);
+      const bytes = readFileSync(p);
       const b64 = Buffer.from(bytes).toString("base64");
       return `data:image/jpeg;base64,${b64}`;
     } catch {
-      return createFoodSvgDataUri(fallbackTitle, "🍲", "#9a3412", "#431407");
+      // Sonraki aday yolu dene
     }
   }
+  return `/uploads/${filename}`;
 }
 
 export function initSchema(db: DatabaseSync): void {
@@ -375,7 +377,25 @@ export function getDatabase(dbPath?: string): DatabaseSync {
     return customDb;
   }
   if (!defaultDbInstance) {
-    const path = Deno.env.get("DATABASE_PATH") ?? "./evyemeklerim.sqlite";
+    const isVercel = Boolean(getEnv("VERCEL"));
+    const path = getEnv("DATABASE_PATH") ?? (isVercel ? "/tmp/evyemeklerim.sqlite" : "./evyemeklerim.sqlite");
+    if (isVercel && !existsSync(path)) {
+      const candidates = [
+        "./evyemeklerim.sqlite",
+        new URL("../evyemeklerim.sqlite", import.meta.url),
+        new URL("../../evyemeklerim.sqlite", import.meta.url),
+      ];
+      for (const src of candidates) {
+        try {
+          if (existsSync(src)) {
+            copyFileSync(src, path);
+            break;
+          }
+        } catch {
+          // Devam et
+        }
+      }
+    }
     defaultDbInstance = new DatabaseSync(path);
     initSchema(defaultDbInstance);
     seedDatabase(defaultDbInstance);

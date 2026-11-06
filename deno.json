@@ -1,8 +1,9 @@
 {
   "tasks": {
-    "start": "deno run --watch --allow-net --allow-read --allow-write --allow-env src/server.ts",
-    "check": "deno check src/server.ts tests/verification.test.ts",
-    "test": "deno test --allow-read --allow-write --allow-env tests/verification.test.ts"
+    "start": "deno run --no-npm --watch --allow-net --allow-read --allow-write --allow-env src/server.ts",
+    "check": "deno check --no-npm src/server.ts tests/verification.test.ts",
+    "test": "deno test --no-npm --allow-read --allow-write --allow-env tests/verification.test.ts",
+    "build:vercel": "deno run --no-npm --allow-read --allow-write scripts/build-vercel.ts"
   },
   "compilerOptions": {
     "strict": true,

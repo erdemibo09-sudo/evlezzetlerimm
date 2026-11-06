@@ -1,6 +1,22 @@
 import { createHmac, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { Buffer } from "node:buffer";
+import process from "node:process";
 
-const SESSION_SECRET = Deno.env.get("SESSION_SECRET") ??
+export function getEnv(key: string): string | undefined {
+  try {
+    if (typeof Deno !== "undefined" && typeof Deno.env?.get === "function") {
+      return Deno.env.get(key);
+    }
+  } catch {
+    // Ignore permission errors
+  }
+  if (typeof process !== "undefined" && process.env) {
+    return process.env[key];
+  }
+  return undefined;
+}
+
+const SESSION_SECRET = getEnv("SESSION_SECRET") ??
   "evyemeklerimm-super-secret-hmac-key-2026-production-grade";
 
 /**

@@ -1,4 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
+import { readFile } from "node:fs/promises";
 import { OrderFsmError } from "./domain/orderFsm.ts";
 import {
   validateCheckoutInput,
@@ -99,7 +100,7 @@ export function createApp(db: DatabaseSync) {
       if (method === "GET" && uploadMatch) {
         const filename = uploadMatch[1];
         try {
-          const fileBytes = await Deno.readFile(`./public/uploads/${filename}`);
+          const fileBytes = await readFile(`./public/uploads/${filename}`);
           const ext = filename.split(".").pop()?.toLowerCase() ?? "jpg";
           const mimeMap: Record<string, string> = {
             jpg: "image/jpeg",
@@ -108,7 +109,7 @@ export function createApp(db: DatabaseSync) {
             webp: "image/webp",
             svg: "image/svg+xml",
           };
-          return new Response(fileBytes, {
+          return new Response(new Uint8Array(fileBytes), {
             status: 200,
             headers: {
               "content-type": mimeMap[ext] ?? "application/octet-stream",

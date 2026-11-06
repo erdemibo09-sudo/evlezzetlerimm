@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { formatKurus } from "../domain/money.ts";
-import { generateId } from "./cryptoUtils.ts";
+import { generateId, getEnv } from "./cryptoUtils.ts";
 
 export type EmailEventType = "ORDER_PURCHASED" | "ORDER_REFUND_REQUESTED" | "ORDER_REFUNDED";
 
@@ -52,7 +52,7 @@ export interface EmailOutboxRecord {
   createdAt: string;
 }
 
-const ADMIN_NOTIFICATION_EMAIL = Deno.env.get("ADMIN_EMAIL") ?? "admin@evyemeklerim.com";
+const ADMIN_NOTIFICATION_EMAIL = getEnv("ADMIN_EMAIL") ?? "admin@evyemeklerim.com";
 
 function escapeHtml(str: string): string {
   return str
