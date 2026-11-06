@@ -41,6 +41,11 @@ import {
   listProducts,
   updateProduct,
 } from "./services/productService.ts";
+import {
+  deleteRowInSupabase,
+  pullFromSupabaseIfNeeded,
+  pushAllToSupabase,
+} from "./services/supabaseSync.ts";
 import { renderIndexHtml } from "./ui/indexHtml.ts";
 
 function jsonResponse(
@@ -72,13 +77,22 @@ async function parseJsonBody(req: Request): Promise<Record<string, unknown>> {
   }
 }
 
-export function createApp(db: DatabaseSync) {
-  async function handleRequest(req: Request): Promise<Response> {
+export function createApp(
+  db: DatabaseSync,
+  options?: { enableSupabaseSync?: boolean },
+) {
+  const syncEnabled = options?.enableSupabaseSync ?? false;
+
+  async function handleCoreRequest(req: Request): Promise<Response> {
     const url = new URL(req.url);
     const path = url.pathname;
     const method = req.method.toUpperCase();
 
     try {
+      if (syncEnabled && path.startsWith("/api/")) {
+        await pullFromSupabaseIfNeeded(db, method !== "GET");
+      }
+
       // 1. Ana Sayfa & Arayüz
       if (method === "GET" && (path === "/" || path === "/index.html")) {
         return new Response(renderIndexHtml(), {
@@ -280,6 +294,9 @@ export function createApp(db: DatabaseSync) {
           if (method === "DELETE") {
             const hard = url.searchParams.get("hard") === "true";
             const result = deleteOrArchiveProduct(db, admin, productId, hard);
+            if (syncEnabled && hard) {
+              await deleteRowInSupabase("products", "id", productId);
+            }
             return jsonResponse(result, 200);
           }
         }
@@ -336,6 +353,23 @@ export function createApp(db: DatabaseSync) {
         500,
       );
     }
+  }
+
+  async function handleRequest(req: Request): Promise<Response> {
+    const res = await handleCoreRequest(req);
+    const method = req.method.toUpperCase();
+    const url = new URL(req.url);
+    if (
+      syncEnabled &&
+      url.pathname.startsWith("/api/") &&
+      method !== "GET" &&
+      method !== "HEAD" &&
+      res.status >= 200 &&
+      res.status < 300
+    ) {
+      await pushAllToSupabase(db);
+    }
+    return res;
   }
 
   return {

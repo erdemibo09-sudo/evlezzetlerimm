@@ -1935,6 +1935,173 @@ function getAdminDashboardStats(db) {
   };
 }
 
+// --- src/services/supabaseSync.ts ---
+const DEFAULT_SUPABASE_URL = "https://tociikxbqycmfvsdllwx.supabase.co";
+const DEFAULT_SUPABASE_KEY = "sb_publishable_cnNDiLzf4pY1K1Z30shrZw_CmRbavTI";
+function getSupabaseConfig() {
+  const url = getEnv("NEXT_PUBLIC_SUPABASE_URL") ?? getEnv("SUPABASE_URL") ?? DEFAULT_SUPABASE_URL;
+  const key = getEnv("SUPABASE_SERVICE_ROLE_KEY") ?? getEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY") ?? getEnv("SUPABASE_ANON_KEY") ?? DEFAULT_SUPABASE_KEY;
+  const disabled = getEnv("DISABLE_SUPABASE_SYNC") === "1";
+  return {
+    url: url.replace(/\/+$/, ""),
+    key,
+    enabled: Boolean(url && key && !disabled)
+  };
+}
+const TABLES_IN_ORDER = [
+  {
+    name: "users",
+    pk: "id"
+  },
+  {
+    name: "sessions",
+    pk: "token_hash"
+  },
+  {
+    name: "products",
+    pk: "id"
+  },
+  {
+    name: "orders",
+    pk: "id"
+  },
+  {
+    name: "order_items",
+    pk: "id"
+  },
+  {
+    name: "refunds",
+    pk: "id"
+  },
+  {
+    name: "email_outbox",
+    pk: "id"
+  },
+  {
+    name: "audit_logs",
+    pk: "id"
+  }
+];
+let lastPullTime = 0;
+const PULL_TTL_MS = 3500;
+async function supabaseFetch(path, options = {}) {
+  const cfg = getSupabaseConfig();
+  if (!cfg.enabled) return null;
+  const headers = new Headers(options.headers || {});
+  headers.set("apikey", cfg.key);
+  if (cfg.key.startsWith("eyJ")) {
+    headers.set("Authorization", `Bearer ${cfg.key}`);
+  }
+  if (!headers.has("Content-Type") && options.body) {
+    headers.set("Content-Type", "application/json");
+  }
+  try {
+    return await fetch(`${cfg.url}/rest/v1/${path}`, {
+      ...options,
+      headers
+    });
+  } catch  {
+    return null;
+  }
+}
+/**
+ * Yerel SQLite tablolarındaki güncel verileri Supabase (PostgreSQL) tablolarına yazar (Upsert).
+ */ async function pushAllToSupabase(db) {
+  const cfg = getSupabaseConfig();
+  if (!cfg.enabled) return false;
+  try {
+    for (const t of TABLES_IN_ORDER){
+      const rows = db.prepare(`SELECT * FROM ${t.name}`).all();
+      if (rows.length === 0) continue;
+      const cleanRows = rows.map((r)=>({
+          ...r
+        }));
+      const res = await supabaseFetch(`${t.name}?on_conflict=${t.pk}`, {
+        method: "POST",
+        headers: {
+          Prefer: "resolution=merge-duplicates,return=minimal"
+        },
+        body: JSON.stringify(cleanRows)
+      });
+      if (!res || !res.ok && res.status !== 201 && res.status !== 200 && res.status !== 204) {
+        return false;
+      }
+    }
+    lastPullTime = Date.now();
+    return true;
+  } catch  {
+    return false;
+  }
+}
+/**
+ * Supabase (PostgreSQL) tablolarındaki kalıcı verileri çekip yerel SQLite motoruna senkronize eder.
+ * Eğer Supabase tabloları yeni oluşturulmuş ve boşsa, başlangıç verilerini otomatik olarak Supabase'e yükler.
+ */ async function pullFromSupabaseIfNeeded(db, force = false) {
+  const cfg = getSupabaseConfig();
+  if (!cfg.enabled) return;
+  if (!force && Date.now() - lastPullTime < PULL_TTL_MS) {
+    return;
+  }
+  try {
+    // Önce users tablosunu kontrol et
+    const usersRes = await supabaseFetch("users?select=*");
+    if (!usersRes || !usersRes.ok) {
+      // Tablolar henüz oluşturulmamış veya ağ erişimi yok -> yerel veritabanı ile devam et
+      return;
+    }
+    const remoteUsers = await usersRes.json();
+    if (!Array.isArray(remoteUsers)) return;
+    // Eğer Supabase'de tablo yeni açılmış ve henüz hiç kullanıcı yoksa: yerel başlangıç verisini Supabase'e yükle!
+    if (remoteUsers.length === 0) {
+      await pushAllToSupabase(db);
+      return;
+    }
+    // Diğer tüm tabloları paralel olarak Supabase'den çek
+    const otherTables = TABLES_IN_ORDER.slice(1);
+    const responses = await Promise.all(otherTables.map((t)=>supabaseFetch(`${t.name}?select=*`)));
+    const tableDataMap = new Map();
+    tableDataMap.set("users", remoteUsers);
+    for(let i = 0; i < otherTables.length; i++){
+      const r = responses[i];
+      if (!r || !r.ok) return;
+      const rows = await r.json();
+      if (!Array.isArray(rows)) return;
+      tableDataMap.set(otherTables[i].name, rows);
+    }
+    // Atomik olarak yerel SQLite tablolarını Supabase verileriyle güncelle
+    db.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE TRANSACTION;");
+    try {
+      for (const t of TABLES_IN_ORDER){
+        const rows = tableDataMap.get(t.name) ?? [];
+        db.exec(`DELETE FROM ${t.name}`);
+        if (rows.length === 0) continue;
+        const cols = Object.keys(rows[0]);
+        const placeholders = cols.map(()=>"?").join(", ");
+        const stmt = db.prepare(`INSERT OR REPLACE INTO ${t.name} (${cols.join(", ")}) VALUES (${placeholders})`);
+        for (const row of rows){
+          const vals = cols.map((c)=>row[c] === undefined ? null : row[c]);
+          stmt.run(...vals);
+        }
+      }
+      db.exec("COMMIT; PRAGMA foreign_keys = ON;");
+      lastPullTime = Date.now();
+    } catch  {
+      try {
+        db.exec("ROLLBACK; PRAGMA foreign_keys = ON;");
+      } catch  {
+      // Ignore
+      }
+    }
+  } catch  {
+  // Ağ hatası durumunda yerel veritabanı kesintisiz çalışmaya devam eder
+  }
+}
+async function deleteRowInSupabase(table, pkCol, pkVal) {
+  await supabaseFetch(`${table}?${pkCol}=eq.${encodeURIComponent(pkVal)}`, {
+    method: "DELETE"
+  });
+}
+
 // --- src/ui/indexHtml.ts ---
 function renderIndexHtml() {
   return `<!DOCTYPE html>
@@ -3630,12 +3797,16 @@ async function parseJsonBody(req) {
     throw new ValidationError("Geçersiz JSON formatı.");
   }
 }
-function createApp(db) {
-  async function handleRequest(req) {
+function createApp(db, options) {
+  const syncEnabled = options?.enableSupabaseSync ?? false;
+  async function handleCoreRequest(req) {
     const url = new URL(req.url);
     const path = url.pathname;
     const method = req.method.toUpperCase();
     try {
+      if (syncEnabled && path.startsWith("/api/")) {
+        await pullFromSupabaseIfNeeded(db, method !== "GET");
+      }
       // 1. Ana Sayfa & Arayüz
       if (method === "GET" && (path === "/" || path === "/index.html")) {
         return new Response(renderIndexHtml(), {
@@ -3876,6 +4047,9 @@ function createApp(db) {
           if (method === "DELETE") {
             const hard = url.searchParams.get("hard") === "true";
             const result = deleteOrArchiveProduct(db, admin, productId, hard);
+            if (syncEnabled && hard) {
+              await deleteRowInSupabase("products", "id", productId);
+            }
             return jsonResponse(result, 200);
           }
         }
@@ -3951,6 +4125,15 @@ function createApp(db) {
       }, 500);
     }
   }
+  async function handleRequest(req) {
+    const res = await handleCoreRequest(req);
+    const method = req.method.toUpperCase();
+    const url = new URL(req.url);
+    if (syncEnabled && url.pathname.startsWith("/api/") && method !== "GET" && method !== "HEAD" && res.status >= 200 && res.status < 300) {
+      await pushAllToSupabase(db);
+    }
+    return res;
+  }
   return {
     fetch: handleRequest
   };
@@ -3958,7 +4141,9 @@ function createApp(db) {
 
 // --- src/vercelEntry.ts ---
 const db = getDatabase();
-const app = createApp(db);
+const app = createApp(db, {
+  enableSupabaseSync: true
+});
 export default async function handler(req, res) {
   try {
     const proto = req.headers?.["x-forwarded-proto"] || "https";

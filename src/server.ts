@@ -3,7 +3,7 @@ import { getDatabase } from "./db/database.ts";
 
 const port = Number(Deno.env.get("PORT") ?? "3000");
 const db = getDatabase();
-const app = createApp(db);
+const app = createApp(db, { enableSupabaseSync: true });
 
 console.log(`============================================================`);
 console.log(`🍲 Ev Yemeklerim — E-Ticaret ve Sipariş Yönetim Platformu`);

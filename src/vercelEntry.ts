@@ -3,7 +3,7 @@ import { createApp } from "./app.ts";
 import { getDatabase } from "./db/database.ts";
 
 const db = getDatabase();
-const app = createApp(db);
+const app = createApp(db, { enableSupabaseSync: true });
 
 export default async function handler(req: any, res: any) {
   try {

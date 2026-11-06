@@ -12,6 +12,7 @@ const files = [
   "src/services/productService.ts",
   "src/services/emailService.ts",
   "src/services/orderService.ts",
+  "src/services/supabaseSync.ts",
   "src/ui/indexHtml.ts",
   "src/app.ts",
   "src/vercelEntry.ts",
