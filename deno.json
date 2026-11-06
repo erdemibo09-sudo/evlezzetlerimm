@@ -1,0 +1,14 @@
+{
+  "tasks": {
+    "start": "deno run --watch --allow-net --allow-read --allow-write --allow-env src/server.ts",
+    "check": "deno check src/server.ts tests/verification.test.ts",
+    "test": "deno test --allow-read --allow-write --allow-env tests/verification.test.ts"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  }
+}
