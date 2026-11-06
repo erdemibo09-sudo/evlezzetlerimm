@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 const files = [
   "src/domain/money.ts",
   "src/domain/orderFsm.ts",
+  "src/domain/turkeyLocations.ts",
   "src/domain/validation.ts",
   "src/services/cryptoUtils.ts",
   "src/db/database.ts",

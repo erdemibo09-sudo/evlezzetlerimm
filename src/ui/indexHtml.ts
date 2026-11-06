@@ -601,33 +601,102 @@ export function renderIndexHtml(): string {
       </div>
     </div>
 
-    <!-- VIEW 3B: MEMBER PROFILE & ACCOUNT SETTINGS -->
+    <!-- VIEW 3B: MEMBER PROFILE & TURKEY ADDRESS PORTAL -->
     <div id="view-profile" style="display:none;">
-      <div class="panel-card" style="max-width:680px;margin:0 auto;">
-        <h2 style="font-size:22px;font-weight:800;margin-bottom:6px;">👤 Üyelik Bilgilerim ve Teslimat Ayarları</h2>
-        <p style="font-size:13.5px;color:var(--text-muted);margin-bottom:18px;">Kayıtlı iletişim bilgilerinizi, varsayılan teslimat adresinizi ve hesap şifrenizi buradan güncelleyebilirsiniz.</p>
+      <div class="panel-card" style="max-width:820px;margin:0 auto;">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border);">
+          <div>
+            <h2 style="font-size:22px;font-weight:900;">👤 Üyelik Bilgilerim & Türkiye Adres Portalı</h2>
+            <p style="font-size:13.5px;color:var(--text-muted);">Türkiye'deki 81 İl, 973 İlçe ve tüm Mahalleler arasından teslimat bölgenizi seçip adres açıklamanızı kaydedebilirsiniz.</p>
+          </div>
+          <span class="status-badge status-DELIVERED">☁️ Supabase Kalıcı Kayıt Aktif</span>
+        </div>
+
         <form onsubmit="submitProfileForm(event)">
-          <div class="form-group">
-            <label>E-Posta Adresi (Değiştirilemez)</label>
-            <input type="email" id="prof-email" class="form-control" disabled style="background:#f5f5f4;" />
+          <!-- Kişisel Bilgiler -->
+          <div style="background:var(--surface-alt);padding:16px;border-radius:12px;border:1px solid var(--border);margin-bottom:20px;">
+            <h3 style="font-size:15px;font-weight:800;margin-bottom:12px;color:var(--primary);">1. Kişisel Üyelik Bilgileri</h3>
+            <div class="form-grid">
+              <div class="form-group">
+                <label>E-Posta Adresi</label>
+                <input type="email" id="prof-email" class="form-control" disabled style="background:#e7e5e4;cursor:not-allowed;" />
+              </div>
+              <div class="form-group">
+                <label>Ad Soyad *</label>
+                <input type="text" id="prof-fullname" class="form-control" required placeholder="Adınız Soyadınız" />
+              </div>
+              <div class="form-group">
+                <label>Telefon Numarası *</label>
+                <input type="text" id="prof-phone" class="form-control" required placeholder="05XX XXX XX XX" />
+              </div>
+              <div class="form-group">
+                <label>Yeni Şifre (Değiştirmek istemiyorsanız boş bırakın)</label>
+                <input type="password" id="prof-password" class="form-control" placeholder="En az 6 karakter" />
+              </div>
+            </div>
           </div>
-          <div class="form-group">
-            <label>Ad Soyad *</label>
-            <input type="text" id="prof-fullname" class="form-control" required />
+
+          <!-- Türkiye İl - İlçe - Mahalle Adres Portalı -->
+          <div style="background:#fff;padding:18px;border-radius:12px;border:2px solid #fed7aa;margin-bottom:20px;box-shadow:0 4px 14px rgba(180,83,9,0.06);">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px;">
+              <h3 style="font-size:16px;font-weight:900;color:var(--primary);">2. 🇹🇷 Türkiye İl • İlçe • Mahalle Seçim Portalı</h3>
+              <span id="neighborhood-status-badge" style="font-size:12px;font-weight:700;color:var(--accent);background:var(--accent-light);padding:4px 10px;border-radius:999px;">81 İl & Tüm İlçeler Hazır</span>
+            </div>
+
+            <div class="form-grid">
+              <div class="form-group">
+                <label>Adres Başlığı</label>
+                <select id="addr-title" class="form-control" onchange="updateCombinedAddressPreview()">
+                  <option value="Ev Adresi">🏠 Ev Adresi</option>
+                  <option value="İş Yeri Adresi">🏢 İş Yeri Adresi</option>
+                  <option value="Aile / Diğer Adres">📍 Aile / Diğer Adres</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>İl Seçiniz (81 İl) *</label>
+                <select id="addr-province" class="form-control" required onchange="onProvinceChange()">
+                  <option value="">-- İl Seçiniz --</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>İlçe Seçiniz *</label>
+                <select id="addr-district" class="form-control" required onchange="onDistrictChange()" disabled>
+                  <option value="">-- Önce İl Seçiniz --</option>
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label>Mahalle / Köy Seçiniz *</label>
+                <select id="addr-neighborhood" class="form-control" required onchange="onNeighborhoodChange()" disabled>
+                  <option value="">-- Önce İlçe Seçiniz --</option>
+                </select>
+              </div>
+
+              <div class="form-group full" id="custom-neighborhood-wrap" style="display:none;">
+                <label>Mahalle / Köy Adını Yazınız *</label>
+                <input type="text" id="addr-neighborhood-custom" class="form-control" placeholder="Örn: Cumhuriyet Mah." oninput="updateCombinedAddressPreview()" />
+              </div>
+
+              <div class="form-group full">
+                <label>Açık Adres Detayı / Açıklama (Cadde, Sokak, Bina No, Kat, Daire No, Tarif) *</label>
+                <textarea id="addr-detail" class="form-control" required placeholder="Örn: Bahariye Caddesi Çiçek Apartmanı No: 42 Kat: 3 Daire: 5 (Köşedeki fırının yanındaki bina)" oninput="updateCombinedAddressPreview()"></textarea>
+              </div>
+            </div>
+
+            <!-- Canlı Birleştirilmiş Adres Önizlemesi -->
+            <div style="background:#fff7ed;border:1px solid #fdba74;border-radius:10px;padding:12px 14px;margin-top:8px;">
+              <div style="font-size:11.5px;font-weight:800;color:#9a3412;text-transform:uppercase;margin-bottom:4px;">📍 Kaydedilecek Tam Teslimat Adresi Önizlemesi:</div>
+              <div id="combined-address-preview" style="font-size:14px;font-weight:700;color:var(--text);">Lütfen yukarıdan İl, İlçe, Mahalle seçin ve adres açıklamanızı yazın.</div>
+              <input type="hidden" id="prof-address" />
+            </div>
           </div>
-          <div class="form-group">
-            <label>Telefon Numarası</label>
-            <input type="text" id="prof-phone" class="form-control" />
+
+          <div style="display:flex;justify-content:flex-end;gap:10px;">
+            <button type="button" class="btn btn-outline" onclick="switchView('store')">Vitrine Dön</button>
+            <button type="submit" class="btn btn-primary" style="padding:11px 22px;font-size:14.5px;">💾 Adresimi ve Üyelik Bilgilerimi Kaydet</button>
           </div>
-          <div class="form-group">
-            <label>Varsayılan Teslimat Adresi</label>
-            <textarea id="prof-address" class="form-control"></textarea>
-          </div>
-          <div class="form-group">
-            <label>Yeni Şifre (Değiştirmek istemiyorsanız boş bırakın)</label>
-            <input type="password" id="prof-password" class="form-control" placeholder="En az 6 karakter" />
-          </div>
-          <button type="submit" class="btn btn-primary">💾 Üyelik Bilgilerimi Güncelle</button>
         </form>
       </div>
     </div>
@@ -684,12 +753,11 @@ export function renderIndexHtml(): string {
             <input type="text" id="auth-fullname" class="form-control" placeholder="Örn: Mehmet Demir" />
           </div>
           <div class="form-group">
-            <label>Telefon Numarası</label>
+            <label>Telefon Numarası *</label>
             <input type="text" id="auth-phone" class="form-control" placeholder="0532 000 00 00" />
           </div>
-          <div class="form-group">
-            <label>Teslimat Adresi</label>
-            <input type="text" id="auth-address" class="form-control" placeholder="Mahalle, Sokak, Bina ve Daire No, İlçe/İl" />
+          <div style="background:#fff7ed;border:1px solid #fed7aa;padding:10px 12px;border-radius:8px;font-size:12.5px;color:#9a3412;margin-bottom:12px;">
+            📍 <strong>Not:</strong> Üye olduktan hemen sonra açılacak olan <strong>Türkiye İl • İlçe • Mahalle Adres Portalı</strong> ekranından açık teslimat adresinizi seçebilirsiniz.
           </div>
         </div>
         <div class="form-group">
@@ -936,17 +1004,17 @@ export function renderIndexHtml(): string {
       e.preventDefault();
       const email = document.getElementById('auth-email').value;
       const password = document.getElementById('auth-password').value;
+      const wasRegister = state.authMode === 'register';
       try {
-        if (state.authMode === 'register') {
+        if (wasRegister) {
           const fullName = document.getElementById('auth-fullname').value;
           const phone = document.getElementById('auth-phone').value;
-          const address = document.getElementById('auth-address').value;
           const res = await api('/api/auth/register', {
             method: 'POST',
-            body: JSON.stringify({ fullName, email, password, phone, address })
+            body: JSON.stringify({ fullName, email, password, phone, address: 'Adres Seçilmedi' })
           });
           state.user = res.user;
-          showToast('Üyeliğiniz oluşturuldu, hoş geldiniz!', 'success');
+          showToast('Üyeliğiniz oluşturuldu! Lütfen İl, İlçe ve Mahalle bilgilerinizi seçip kaydedin.', 'success');
         } else {
           const res = await api('/api/auth/login', {
             method: 'POST',
@@ -959,6 +1027,8 @@ export function renderIndexHtml(): string {
         renderAuthHeader();
         if (state.user && state.user.role === 'ADMIN') {
           await switchView('admin');
+        } else if (wasRegister) {
+          await switchView('profile');
         } else {
           await switchView('store');
         }
@@ -1222,26 +1292,231 @@ export function renderIndexHtml(): string {
       if (view === 'store') await fetchProducts();
       if (view === 'orders') await loadMyOrders();
       if (view === 'emails') await loadEmailsView();
-      if (view === 'profile') loadProfileView();
+      if (view === 'profile') await loadProfileView();
       if (view === 'admin') await loadAdminAll();
     }
 
-    function loadProfileView() {
+    let turkeyLocationsMap = null;
+    const provinceNeighborhoodCache = {};
+
+    const DEFAULT_FALLBACK_NEIGHBORHOODS = [
+      'Merkez Mah.', 'Cumhuriyet Mah.', 'Atatürk Mah.', 'Fatih Mah.', 'Yeni Mah.',
+      'Bahçelievler Mah.', 'Zafer Mah.', 'Hürriyet Mah.', 'İstiklal Mah.', 'Kurtuluş Mah.',
+      'Yunus Emre Mah.', 'Mimar Sinan Mah.', 'Gazi Mah.', 'Yeşiltepe Mah.', 'Çamlık Mah.',
+      'Kültür Mah.', 'Esentepe Mah.', 'Aydınlıkevler Mah.', 'Gültepe Mah.', 'Yıldız Mah.'
+    ];
+
+    async function ensureTurkeyLocationsLoaded() {
+      if (turkeyLocationsMap) return turkeyLocationsMap;
+      try {
+        const res = await api('/api/locations');
+        turkeyLocationsMap = res.locations || {};
+      } catch {
+        turkeyLocationsMap = {};
+      }
+      const provSelect = document.getElementById('addr-province');
+      if (provSelect) {
+        const provinces = Object.keys(turkeyLocationsMap).sort((a, b) => a.localeCompare(b, 'tr'));
+        provSelect.innerHTML = '<option value="">-- İl Seçiniz (81 İl) --</option>' +
+          provinces.map(p => \`<option value="\${escapeHtml(p)}">\${escapeHtml(p)}</option>\`).join('');
+      }
+      return turkeyLocationsMap;
+    }
+
+    async function onProvinceChange(targetDistrict = null, targetNeighborhood = null) {
+      await ensureTurkeyLocationsLoaded();
+      const prov = document.getElementById('addr-province').value;
+      const distSelect = document.getElementById('addr-district');
+      const neighSelect = document.getElementById('addr-neighborhood');
+      const customWrap = document.getElementById('custom-neighborhood-wrap');
+      const badge = document.getElementById('neighborhood-status-badge');
+
+      customWrap.style.display = 'none';
+      if (!prov || !turkeyLocationsMap[prov]) {
+        distSelect.innerHTML = '<option value="">-- Önce İl Seçiniz --</option>';
+        distSelect.disabled = true;
+        neighSelect.innerHTML = '<option value="">-- Önce İlçe Seçiniz --</option>';
+        neighSelect.disabled = true;
+        updateCombinedAddressPreview();
+        return;
+      }
+
+      const districts = [...turkeyLocationsMap[prov]].map(d => d.trim()).sort((a, b) => a.localeCompare(b, 'tr'));
+      distSelect.innerHTML = '<option value="">-- İlçe Seçiniz (' + districts.length + ' İlçe) --</option>' +
+        districts.map(d => \`<option value="\${escapeHtml(d)}">\${escapeHtml(d)}</option>\`).join('');
+      distSelect.disabled = false;
+
+      neighSelect.innerHTML = '<option value="">-- Önce İlçe Seçiniz --</option>';
+      neighSelect.disabled = true;
+      badge.textContent = prov + ' ili seçildi (' + districts.length + ' ilçe)';
+
+      if (targetDistrict && districts.includes(targetDistrict)) {
+        distSelect.value = targetDistrict;
+        await onDistrictChange(targetNeighborhood);
+      } else {
+        updateCombinedAddressPreview();
+      }
+    }
+
+    async function onDistrictChange(targetNeighborhood = null) {
+      const prov = document.getElementById('addr-province').value;
+      const dist = document.getElementById('addr-district').value;
+      const neighSelect = document.getElementById('addr-neighborhood');
+      const customWrap = document.getElementById('custom-neighborhood-wrap');
+      const badge = document.getElementById('neighborhood-status-badge');
+
+      customWrap.style.display = 'none';
+      if (!prov || !dist) {
+        neighSelect.innerHTML = '<option value="">-- Önce İlçe Seçiniz --</option>';
+        neighSelect.disabled = true;
+        updateCombinedAddressPreview();
+        return;
+      }
+
+      neighSelect.innerHTML = '<option value="">⏳ Mahalleler yükleniyor...</option>';
+      neighSelect.disabled = true;
+      badge.textContent = dist + ' mahalleleri yükleniyor...';
+
+      let neighborhoods = [];
+      try {
+        if (!provinceNeighborhoodCache[prov]) {
+          const res = await fetch('https://turkiyeapi.dev/api/v1/provinces?name=' + encodeURIComponent(prov));
+          if (res.ok) {
+            const json = await res.json();
+            if (json && Array.isArray(json.data) && json.data.length > 0) {
+              provinceNeighborhoodCache[prov] = json.data[0].districts || [];
+            }
+          }
+        }
+        const provDistricts = provinceNeighborhoodCache[prov] || [];
+        const matchedDist = provDistricts.find(
+          d => d.name && d.name.toLocaleLowerCase('tr') === dist.toLocaleLowerCase('tr')
+        );
+        if (matchedDist && Array.isArray(matchedDist.neighborhoods)) {
+          neighborhoods = matchedDist.neighborhoods.map(n => {
+            const name = String(n.name || '').trim();
+            return name.endsWith('Mah.') || name.endsWith('Mahallesi') || name.endsWith('Köyü')
+              ? name
+              : (name + ' Mah.');
+          });
+        }
+      } catch {
+        // Çevrimdışı veya API erişilemez ise varsayılan mahalle listesini kullan
+      }
+
+      if (neighborhoods.length === 0) {
+        neighborhoods = [...DEFAULT_FALLBACK_NEIGHBORHOODS];
+      }
+
+      neighborhoods.sort((a, b) => a.localeCompare(b, 'tr'));
+
+      neighSelect.innerHTML =
+        '<option value="">-- Mahalle / Köy Seçiniz (' + neighborhoods.length + ' Mahalle) --</option>' +
+        neighborhoods.map(n => \`<option value="\${escapeHtml(n)}">\${escapeHtml(n)}</option>\`).join('') +
+        '<option value="__CUSTOM__">✍️ Listede Yok / Mahalle Adını Elle Yaz</option>';
+      neighSelect.disabled = false;
+      badge.textContent = \`✅ \${dist} (\${neighborhoods.length} Mahalle Hazır)\`;
+
+      if (targetNeighborhood) {
+        if (neighborhoods.includes(targetNeighborhood)) {
+          neighSelect.value = targetNeighborhood;
+        } else {
+          neighSelect.value = '__CUSTOM__';
+          customWrap.style.display = 'flex';
+          document.getElementById('addr-neighborhood-custom').value = targetNeighborhood;
+        }
+      }
+      updateCombinedAddressPreview();
+    }
+
+    function onNeighborhoodChange() {
+      const val = document.getElementById('addr-neighborhood').value;
+      const customWrap = document.getElementById('custom-neighborhood-wrap');
+      if (val === '__CUSTOM__') {
+        customWrap.style.display = 'flex';
+        document.getElementById('addr-neighborhood-custom').focus();
+      } else {
+        customWrap.style.display = 'none';
+      }
+      updateCombinedAddressPreview();
+    }
+
+    function updateCombinedAddressPreview() {
+      const title = document.getElementById('addr-title').value || 'Ev Adresi';
+      const prov = document.getElementById('addr-province').value;
+      const dist = document.getElementById('addr-district').value;
+      const neighSel = document.getElementById('addr-neighborhood').value;
+      const neighCustom = document.getElementById('addr-neighborhood-custom').value.trim();
+      const neigh = neighSel === '__CUSTOM__' ? neighCustom : neighSel;
+      const detail = document.getElementById('addr-detail').value.trim();
+
+      const previewEl = document.getElementById('combined-address-preview');
+      const hiddenInput = document.getElementById('prof-address');
+
+      if (!prov && !dist && !detail) {
+        previewEl.textContent = 'Lütfen yukarıdan İl, İlçe, Mahalle seçin ve adres açıklamanızı yazın.';
+        hiddenInput.value = '';
+        return;
+      }
+
+      const formatted = \`[\${title}] \${neigh ? (neigh + ', ') : ''}\${detail ? detail : '(Açık adres detayı girilmedi)'} — \${dist || '?'} / \${prov || '?'}\`;
+      previewEl.textContent = formatted;
+      hiddenInput.value = formatted;
+    }
+
+    async function loadProfileView() {
       if (!state.user) return;
       document.getElementById('prof-email').value = state.user.email || '';
       document.getElementById('prof-fullname').value = state.user.fullName || '';
       document.getElementById('prof-phone').value = state.user.phone || '';
-      document.getElementById('prof-address').value = state.user.address || '';
       document.getElementById('prof-password').value = '';
+
+      await ensureTurkeyLocationsLoaded();
+      const rawAddr = state.user.address || '';
+
+      // Kayıtlı adresi "[Başlık] Mahalle, Detay — İlçe / İl" formatından ayrıştır
+      const structuredMatch = rawAddr.match(/^\\[([^\\]]+)\\]\\s*(?:([^,]+),\\s*)?(.+?)\\s*—\\s*([^/]+?)\\s*\\/\\s*(.+)$/);
+      if (structuredMatch) {
+        const [, savedTitle, savedNeigh, savedDetail, savedDist, savedProv] = structuredMatch;
+        const titleSel = document.getElementById('addr-title');
+        if (titleSel) titleSel.value = savedTitle.trim();
+        document.getElementById('addr-detail').value = savedDetail.trim();
+        const provSel = document.getElementById('addr-province');
+        if (provSel && turkeyLocationsMap[savedProv.trim()]) {
+          provSel.value = savedProv.trim();
+          await onProvinceChange(savedDist.trim(), savedNeigh ? savedNeigh.trim() : null);
+        }
+      } else if (rawAddr && rawAddr !== 'Adres Seçilmedi') {
+        document.getElementById('addr-detail').value = rawAddr;
+        updateCombinedAddressPreview();
+      } else {
+        document.getElementById('addr-detail').value = '';
+        updateCombinedAddressPreview();
+      }
     }
 
     async function submitProfileForm(e) {
       e.preventDefault();
+      const prov = document.getElementById('addr-province').value;
+      const dist = document.getElementById('addr-district').value;
+      const neighSel = document.getElementById('addr-neighborhood').value;
+      const neighCustom = document.getElementById('addr-neighborhood-custom').value.trim();
+      const neigh = neighSel === '__CUSTOM__' ? neighCustom : neighSel;
+      const detail = document.getElementById('addr-detail').value.trim();
+
+      if (!prov || !dist || !neigh || !detail) {
+        showToast('Lütfen İl, İlçe, Mahalle seçiminizi yapın ve açık adres açıklamasını girin.', 'error');
+        return;
+      }
+
+      updateCombinedAddressPreview();
+      const fullAddress = document.getElementById('prof-address').value;
+
       try {
         const payload = {
           fullName: document.getElementById('prof-fullname').value,
           phone: document.getElementById('prof-phone').value,
-          address: document.getElementById('prof-address').value,
+          address: fullAddress,
           newPassword: document.getElementById('prof-password').value || undefined
         };
         const res = await api('/api/auth/profile', {
@@ -1251,7 +1526,7 @@ export function renderIndexHtml(): string {
         state.user = res.user;
         document.getElementById('prof-password').value = '';
         renderAuthHeader();
-        showToast('Üyelik bilgileriniz başarıyla güncellendi!', 'success');
+        showToast('Türkiye İl/İlçe/Mahalle teslimat adresiniz ve üyelik bilgileriniz kaydedildi!', 'success');
       } catch (err) {
         showToast(err.message, 'error');
       }

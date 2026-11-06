@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { readFile } from "node:fs/promises";
 import { OrderFsmError } from "./domain/orderFsm.ts";
+import { TURKEY_PROVINCES_DISTRICTS } from "./domain/turkeyLocations.ts";
 import {
   validateCheckoutInput,
   validateLoginInput,
@@ -178,7 +179,11 @@ export function createApp(
         return jsonResponse({ user: updatedUser }, 200);
       }
 
-      // 3. Vitrin Ürün Uç Noktaları
+      // 3. Vitrin Ürün & Türkiye İl-İlçe Uç Noktaları
+      if (method === "GET" && path === "/api/locations") {
+        return jsonResponse({ locations: TURKEY_PROVINCES_DISTRICTS }, 200);
+      }
+
       if (method === "GET" && path === "/api/products") {
         const category = url.searchParams.get("category") ?? undefined;
         const search = url.searchParams.get("search") ?? undefined;
