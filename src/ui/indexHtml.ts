@@ -1,10 +1,85 @@
-export function renderIndexHtml(): string {
+function escapeServerHtml(s: unknown): string {
+  if (s === null || s === undefined) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> = []): string {
+  const categories = [
+    "Tümü",
+    ...Array.from(new Set(initialProducts.map((p) => String(p.category ?? "")))).filter(Boolean),
+  ];
+  const ssrCategoriesHtml = categories
+    .map(
+      (c, idx) =>
+        `<button class="cat-pill ${idx === 0 ? "active" : ""}" onclick="selectCategory('${escapeServerHtml(c)}')">${escapeServerHtml(c)}</button>`,
+    )
+    .join("");
+
+  const ssrProductsHtml = initialProducts
+    .map((p, idx) => {
+      const dailyStock = Number(p.dailyStock ?? 0);
+      const stockClass = dailyStock === 0 ? "stock-out" : dailyStock <= 5 ? "stock-low" : "stock-ok";
+      const stockText =
+        dailyStock === 0
+          ? "Bugün Tükendi"
+          : dailyStock <= 5
+          ? `Son ${dailyStock} Porsiyon!`
+          : `Günlük Stok: ${dailyStock}`;
+      const allergens = Array.isArray(p.allergens) ? p.allergens : [];
+      const allergensHtml = allergens
+        .map((a) => `<span class="allergen-chip">⚠️ ${escapeServerHtml(a)}</span>`)
+        .join("");
+      const imgPriorityAttr = idx < 2 ? 'fetchpriority="high"' : 'loading="lazy"';
+      const pid = escapeServerHtml(p.id);
+
+      return `
+          <article class="product-card">
+            <div class="product-img-wrap" onclick="openProductDetail('${pid}')" style="cursor:pointer;">
+              <img src="${escapeServerHtml(p.imageUrl)}" alt="${escapeServerHtml(p.name)}" width="540" height="540" decoding="async" ${imgPriorityAttr} />
+              <span class="cat-tag">${escapeServerHtml(p.category)}</span>
+              <span class="stock-pill ${stockClass}">${stockText}</span>
+            </div>
+            <div class="product-body">
+              <div class="product-title" onclick="openProductDetail('${pid}')" style="cursor:pointer;">${escapeServerHtml(p.name)}</div>
+              <div class="product-meta">
+                <span>⚖️ ${escapeServerHtml(p.portionInfo)}</span>
+                <span>⏱️ ${Number(p.prepTimeMinutes ?? 10)} dk</span>
+              </div>
+              <p class="product-desc">${escapeServerHtml(p.description)}</p>
+              <div class="allergen-list">${allergensHtml}</div>
+            </div>
+            <div class="product-footer">
+              <div class="price-tag">${escapeServerHtml(p.priceFormatted)}</div>
+              <div style="display:flex;gap:6px;">
+                <button class="btn btn-sm btn-outline" onclick="openProductDetail('${pid}')">Detay</button>
+                <button class="btn btn-sm btn-primary" ${dailyStock <= 0 ? "disabled" : ""} onclick="addToCart('${pid}', 1)">
+                  ${dailyStock <= 0 ? "Tükendi" : "➕ Sepete Ekle"}
+                </button>
+              </div>
+            </div>
+          </article>`;
+    })
+    .join("");
+
+  const firstImageUrl =
+    initialProducts.length > 0 && typeof initialProducts[0].imageUrl === "string"
+      ? initialProducts[0].imageUrl
+      : "/uploads/incir-receli.jpg";
+
+  const serializedInitialProducts = JSON.stringify(initialProducts).replace(/</g, "\\u003c");
+
   return `<!DOCTYPE html>
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Katkısız, doğal ev yapımı lezzetler: dalında kurutulmuş Aydın dağ inciri, doğal fermente sele siyah zeytin, cennet hurması kurusu, çıtır incir reçeli ve el yapımı içli köfte sipariş platformu." />
   <title>Ev Yemeklerim — Günlük Taze Ev Yemekleri & Doğal Ürünler</title>
+  <link rel="preload" as="image" href="${escapeServerHtml(firstImageUrl)}" fetchpriority="high" />
   <style>
     :root {
       --bg: #faf7f2;
@@ -541,7 +616,12 @@ export function renderIndexHtml(): string {
       </nav>
 
       <div class="header-actions">
-        <div id="auth-area"></div>
+        <div id="auth-area">
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-sm btn-outline" style="color:#fff;border-color:rgba(255,255,255,0.35);" onclick="openAuthModal('login')">🔑 Giriş Yap</button>
+            <button class="btn btn-sm btn-primary" onclick="openAuthModal('register')">✨ Üye Ol</button>
+          </div>
+        </div>
         <button class="cart-trigger" onclick="openCartModal()">
           🛒 Sepetim <span class="cart-badge" id="cart-count">0</span>
         </button>
@@ -567,10 +647,10 @@ export function renderIndexHtml(): string {
     <!-- VIEW 1: STOREFRONT -->
     <div id="view-store">
       <div class="filter-bar">
-        <div class="category-pills" id="category-pills"></div>
+        <div class="category-pills" id="category-pills">${ssrCategoriesHtml}</div>
         <input type="search" id="search-box" class="search-input" placeholder="Yemek, malzeme veya kategori ara..." oninput="renderStorefront()" />
       </div>
-      <div class="product-grid" id="product-grid"></div>
+      <div class="product-grid" id="product-grid">${ssrProductsHtml}</div>
     </div>
 
     <!-- VIEW 2: CUSTOMER ORDERS & REFUNDS -->
@@ -870,7 +950,7 @@ export function renderIndexHtml(): string {
   <script>
     let state = {
       user: null,
-      products: [],
+      products: ${serializedInitialProducts},
       adminProducts: [],
       selectedCategory: 'Tümü',
       cart: JSON.parse(localStorage.getItem('evyemek_cart') || '[]'),
@@ -927,7 +1007,11 @@ export function renderIndexHtml(): string {
 
     async function initApp() {
       saveCart();
-      await Promise.all([fetchCurrentUser(), fetchProducts()]);
+      if (!state.products || state.products.length === 0) {
+        await Promise.all([fetchCurrentUser(), fetchProducts()]);
+      } else {
+        fetchCurrentUser();
+      }
     }
 
     async function fetchCurrentUser() {
@@ -1072,15 +1156,16 @@ export function renderIndexHtml(): string {
         return;
       }
 
-      grid.innerHTML = filtered.map(p => {
+      grid.innerHTML = filtered.map((p, idx) => {
         const stockClass = p.dailyStock === 0 ? 'stock-out' : (p.dailyStock <= 5 ? 'stock-low' : 'stock-ok');
         const stockText = p.dailyStock === 0 ? 'Bugün Tükendi' : (p.dailyStock <= 5 ? \`Son \${p.dailyStock} Porsiyon!\` : \`Günlük Stok: \${p.dailyStock}\`);
         const allergensHtml = (p.allergens || []).map(a => \`<span class="allergen-chip">⚠️ \${escapeHtml(a)}</span>\`).join('');
+        const imgPriority = idx < 2 ? 'fetchpriority="high"' : 'loading="lazy"';
 
         return \`
           <article class="product-card">
             <div class="product-img-wrap" onclick="openProductDetail('\${p.id}')" style="cursor:pointer;">
-              <img src="\${escapeHtml(p.imageUrl)}" alt="\${escapeHtml(p.name)}" />
+              <img src="\${escapeHtml(p.imageUrl)}" alt="\${escapeHtml(p.name)}" width="540" height="540" decoding="async" \${imgPriority} />
               <span class="cat-tag">\${escapeHtml(p.category)}</span>
               <span class="stock-pill \${stockClass}">\${stockText}</span>
             </div>

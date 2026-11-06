@@ -90,15 +90,33 @@ export function createApp(
     const method = req.method.toUpperCase();
 
     try {
-      if (syncEnabled && path.startsWith("/api/")) {
+      // Oturum çerezi/başlığı olmayan anonim ziyaretçilerin /api/auth/me kontrolünü 0ms'de yanıtla
+      if (method === "GET" && path === "/api/auth/me") {
+        const cookieHeader = req.headers.get("cookie") ?? "";
+        const authHeader = req.headers.get("authorization") ?? "";
+        if (!cookieHeader.includes("evyemek_session=") && !authHeader.startsWith("Bearer ")) {
+          return jsonResponse({ user: null }, 200);
+        }
+      }
+
+      if (syncEnabled && path.startsWith("/api/") && path !== "/api/locations") {
         await pullFromSupabaseIfNeeded(db, method !== "GET");
       }
 
-      // 1. Ana Sayfa & Arayüz
+      // 1. Ana Sayfa & Arayüz (SSR Ön-Yüklemeli Ürün Vitrin)
       if (method === "GET" && (path === "/" || path === "/index.html")) {
-        return new Response(renderIndexHtml(), {
+        if (syncEnabled) {
+          pullFromSupabaseIfNeeded(db, false).catch(() => {});
+        }
+        const initialProducts = listProducts(db, { includeArchived: false }) as unknown as Array<
+          Record<string, unknown>
+        >;
+        return new Response(renderIndexHtml(initialProducts), {
           status: 200,
-          headers: { "content-type": "text/html; charset=utf-8" },
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-cache",
+          },
         });
       }
 
@@ -106,7 +124,10 @@ export function createApp(
         const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 400"><rect width="600" height="400" fill="#9a3412"/><text x="300" y="220" font-size="96" text-anchor="middle">🍲</text></svg>`;
         return new Response(svg, {
           status: 200,
-          headers: { "content-type": "image/svg+xml; charset=utf-8" },
+          headers: {
+            "content-type": "image/svg+xml; charset=utf-8",
+            "cache-control": "public, max-age=31536000, immutable",
+          },
         });
       }
 
@@ -114,26 +135,33 @@ export function createApp(
       const uploadMatch = path.match(/^\/uploads\/([a-zA-Z0-9._-]+)$/);
       if (method === "GET" && uploadMatch) {
         const filename = uploadMatch[1];
-        try {
-          const fileBytes = await readFile(`./public/uploads/${filename}`);
-          const ext = filename.split(".").pop()?.toLowerCase() ?? "jpg";
-          const mimeMap: Record<string, string> = {
-            jpg: "image/jpeg",
-            jpeg: "image/jpeg",
-            png: "image/png",
-            webp: "image/webp",
-            svg: "image/svg+xml",
-          };
-          return new Response(new Uint8Array(fileBytes), {
-            status: 200,
-            headers: {
-              "content-type": mimeMap[ext] ?? "application/octet-stream",
-              "cache-control": "public, max-age=86400",
-            },
-          });
-        } catch {
-          return jsonResponse({ error: "Görsel bulunamadı." }, 404);
+        const candidatePaths: Array<string | URL> = [
+          `./public/uploads/${filename}`,
+          new URL(`../public/uploads/${filename}`, import.meta.url),
+        ];
+        for (const candidate of candidatePaths) {
+          try {
+            const fileBytes = await readFile(candidate);
+            const ext = filename.split(".").pop()?.toLowerCase() ?? "jpg";
+            const mimeMap: Record<string, string> = {
+              jpg: "image/jpeg",
+              jpeg: "image/jpeg",
+              png: "image/png",
+              webp: "image/webp",
+              svg: "image/svg+xml",
+            };
+            return new Response(new Uint8Array(fileBytes), {
+              status: 200,
+              headers: {
+                "content-type": mimeMap[ext] ?? "application/octet-stream",
+                "cache-control": "public, max-age=31536000, immutable",
+              },
+            });
+          } catch {
+            // Sonraki aday dosya yolunu dene
+          }
         }
+        return jsonResponse({ error: "Görsel bulunamadı." }, 404);
       }
 
       // 2. Kimlik Doğrulama (Auth) Uç Noktaları
@@ -166,10 +194,7 @@ export function createApp(
 
       if (method === "GET" && path === "/api/auth/me") {
         const user = getAuthenticatedUser(db, req);
-        if (!user) {
-          return jsonResponse({ user: null }, 401);
-        }
-        return jsonResponse({ user }, 200);
+        return jsonResponse({ user: user ?? null }, 200);
       }
 
       if (method === "PUT" && path === "/api/auth/profile") {

@@ -189,17 +189,19 @@ export function seedDatabase(db: DatabaseSync): void {
     db.exec("DELETE FROM products WHERE id IN ('prd_kayseri_manti','prd_yaprak_sarma','prd_hunkar_begendi','prd_su_boregi','prd_mercimek_corbasi','prd_firin_sutlac','prd_ev_acuka','prd_icli_kofte')");
   }
 
-  // Mevcut ürünlerde /uploads/ yolu varsa doğrudan gömülü Base64 Data-URI'ye yükselt (kesintisiz görüntüleme için)
-  const uploadPathRows = db
-    .prepare("SELECT id, name, image_url FROM products WHERE image_url LIKE '/uploads/%'")
-    .all() as Array<{ id: string; name: string; image_url: string }>;
-  if (uploadPathRows.length > 0) {
-    const updateImgStmt = db.prepare("UPDATE products SET image_url = ? WHERE id = ?");
-    for (const r of uploadPathRows) {
-      const fname = r.image_url.replace("/uploads/", "");
-      const dataUri = loadUploadedPhotoDataUri(fname, r.name);
-      updateImgStmt.run(dataUri, r.id);
-    }
+  // Performans optimizasyonu: 5 ana üründe devasa Base64 yerine hızlı statik CDN yollarını (/uploads/*.jpg) kullan
+  const staticImageMap: Record<string, string> = {
+    prd_kuru_incir: "/uploads/kuru-incir.jpg",
+    prd_sele_zeytin: "/uploads/sele-siyah-zeytin.jpg",
+    prd_cennet_hurmasi: "/uploads/cennet-hurmasi-kurusu.jpg",
+    prd_incir_receli: "/uploads/incir-receli.jpg",
+    prd_icli_kofte: "/uploads/icli-kofte.jpg",
+  };
+  const updateStaticImgStmt = db.prepare(
+    "UPDATE products SET image_url = ? WHERE id = ? AND image_url LIKE 'data:image/%'",
+  );
+  for (const [id, urlPath] of Object.entries(staticImageMap)) {
+    updateStaticImgStmt.run(urlPath, id);
   }
 
   const existingUsers = db.prepare("SELECT COUNT(*) as cnt FROM users").get() as { cnt: number };
@@ -252,7 +254,7 @@ export function seedDatabase(db: DatabaseSync): void {
       description:
         "Aydın dağlarının yüksek rakımlı bahçelerinde ilaçsız ve hidrojen peroksitsiz olarak dalında kurutulmuş, ince kabuklu ve içi bol ballı 1. sınıf doğal kuru incir. Üzerindeki beyazlık tamamen kendi doğal meyve şekerinin kristalleşmesidir.",
       category: "Kurutmalıklar & Doğal Meyveler",
-      imageUrl: loadUploadedPhotoDataUri("kuru-incir.jpg", "Doğal Aydın Dağ İnciri"),
+      imageUrl: "/uploads/kuru-incir.jpg",
       portionInfo: "1 Paket (500g Net)",
       allergens: [],
       prepTimeMinutes: 10,
@@ -267,7 +269,7 @@ export function seedDatabase(db: DatabaseSync): void {
       description:
         "Kasım-Aralık hasadı olgunlaşmış ince kabuklu zeytinlerin kostik veya boya kullanılmadan sadece kaya tuzu ile kendi suyunda aylarca çevrilerek tatlandırıldığı, etli ve küçük çekirdekli hakiki ev yapımı sele zeytin.",
       category: "Kahvaltılık & Zeytin",
-      imageUrl: loadUploadedPhotoDataUri("sele-siyah-zeytin.jpg", "Ev Yapımı Sele Siyah Zeytin"),
+      imageUrl: "/uploads/sele-siyah-zeytin.jpg",
       portionInfo: "1 Kavanoz / Paket (500g Net)",
       allergens: [],
       prepTimeMinutes: 10,
@@ -282,7 +284,7 @@ export function seedDatabase(db: DatabaseSync): void {
       description:
         "Tam mevsiminde toplanan cennet hurmalarının kabukları soyularak iplere dizilip dağ esintisinde ve güneşte doğal olarak kurutulmasıyla hazırlanmıştır. Dışı kendi doğal pudrası ile kaplı, içi lokum gibi yumuşaktır.",
       category: "Kurutmalıklar & Doğal Meyveler",
-      imageUrl: loadUploadedPhotoDataUri("cennet-hurmasi-kurusu.jpg", "Cennet Hurması Kurusu"),
+      imageUrl: "/uploads/cennet-hurmasi-kurusu.jpg",
       portionInfo: "1 Paket (500g Net)",
       allergens: [],
       prepTimeMinutes: 10,
@@ -297,7 +299,7 @@ export function seedDatabase(db: DatabaseSync): void {
       description:
         "Ege'nin seçme incirleriyle glikoz şurubu veya koruyucu kullanılmadan, geleneksel bakır tencerede ağır ateşte kıvamlandırılmış, çıtır çekirdekli ve yoğun aromalı ev yapımı incir reçeli.",
       category: "Ev Yapımı Reçeller",
-      imageUrl: loadUploadedPhotoDataUri("incir-receli.jpg", "Ev Yapımı Çıtır İncir Reçeli"),
+      imageUrl: "/uploads/incir-receli.jpg",
       portionInfo: "1 Cam Kavanoz (650g Net)",
       allergens: [],
       prepTimeMinutes: 10,
@@ -312,7 +314,7 @@ export function seedDatabase(db: DatabaseSync): void {
       description:
         "İncecik açılmış çıtır bulgur dış kabuğu, içinde özel baharatlarla kavrulmuş %100 dana kıyması ve bol yerli ceviz içi ile tek tek elde kapatılıp nar gibi kızartılmış ev yapımı içli köfte.",
       category: "İçli Köfte & Ev Yemekleri",
-      imageUrl: loadUploadedPhotoDataUri("icli-kofte.jpg", "El Yapımı Kızarmış İçli Köfte"),
+      imageUrl: "/uploads/icli-kofte.jpg",
       portionInfo: "1 Porsiyon (5 Adet / ~400g)",
       allergens: ["Gluten", "Ceviz", "Yumurta"],
       prepTimeMinutes: 25,

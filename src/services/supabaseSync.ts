@@ -26,8 +26,18 @@ const TABLES_IN_ORDER = [
   { name: "audit_logs", pk: "id" },
 ] as const;
 
+const STATIC_PRODUCT_IMAGE_MAP: Record<string, string> = {
+  prd_kuru_incir: "/uploads/kuru-incir.jpg",
+  prd_sele_zeytin: "/uploads/sele-siyah-zeytin.jpg",
+  prd_cennet_hurmasi: "/uploads/cennet-hurmasi-kurusu.jpg",
+  prd_incir_receli: "/uploads/incir-receli.jpg",
+  prd_icli_kofte: "/uploads/icli-kofte.jpg",
+};
+
 let lastPullTime = 0;
-const PULL_TTL_MS = 3500;
+let hasCompletedInitialPull = false;
+let inFlightPull: Promise<void> | null = null;
+const PULL_TTL_MS = 15000;
 
 async function supabaseFetch(
   path: string,
@@ -55,88 +65,120 @@ async function supabaseFetch(
   }
 }
 
+const PUSH_TIERS = [
+  [
+    { name: "users", pk: "id" },
+    { name: "products", pk: "id" },
+    { name: "audit_logs", pk: "id" },
+  ],
+  [
+    { name: "sessions", pk: "token_hash" },
+    { name: "orders", pk: "id" },
+    { name: "email_outbox", pk: "id" },
+  ],
+  [
+    { name: "order_items", pk: "id" },
+    { name: "refunds", pk: "id" },
+  ],
+] as const;
+
 /**
- * Yerel SQLite tablolarındaki güncel verileri Supabase (PostgreSQL) tablolarına yazar (Upsert).
+ * Yerel SQLite tablolarındaki güncel verileri yabancı anahtar (FK) sırasını koruyarak
+ * 3 paralel dalga halinde Supabase (PostgreSQL) tablolarına yazar (Upsert).
  */
 export async function pushAllToSupabase(db: DatabaseSync): Promise<boolean> {
   const cfg = getSupabaseConfig();
   if (!cfg.enabled) return false;
 
   try {
-    for (const t of TABLES_IN_ORDER) {
-      const rows = db.prepare(`SELECT * FROM ${t.name}`).all() as Array<Record<string, unknown>>;
-      if (rows.length === 0) continue;
+    for (const tier of PUSH_TIERS) {
+      const results = await Promise.all(
+        tier.map(async (t) => {
+          const rows = db.prepare(`SELECT * FROM ${t.name}`).all() as Array<Record<string, unknown>>;
+          if (rows.length === 0) return true;
 
-      const cleanRows = rows.map((r) => ({ ...r }));
-      const res = await supabaseFetch(`${t.name}?on_conflict=${t.pk}`, {
-        method: "POST",
-        headers: {
-          Prefer: "resolution=merge-duplicates,return=minimal",
-        },
-        body: JSON.stringify(cleanRows),
-      });
+          const cleanRows = rows.map((r) => {
+            const copy = { ...r };
+            if (
+              t.name === "products" &&
+              typeof copy.id === "string" &&
+              STATIC_PRODUCT_IMAGE_MAP[copy.id]
+            ) {
+              if (typeof copy.image_url === "string" && copy.image_url.startsWith("data:image/")) {
+                copy.image_url = STATIC_PRODUCT_IMAGE_MAP[copy.id];
+              }
+            }
+            return copy;
+          });
 
-      if (!res || (!res.ok && res.status !== 201 && res.status !== 200 && res.status !== 204)) {
+          const res = await supabaseFetch(`${t.name}?on_conflict=${t.pk}`, {
+            method: "POST",
+            headers: {
+              Prefer: "resolution=merge-duplicates,return=minimal",
+            },
+            body: JSON.stringify(cleanRows),
+          });
+
+          return Boolean(
+            res && (res.ok || res.status === 201 || res.status === 200 || res.status === 204),
+          );
+        }),
+      );
+      if (!results.every(Boolean)) {
         return false;
       }
     }
+
     lastPullTime = Date.now();
+    hasCompletedInitialPull = true;
     return true;
   } catch {
     return false;
   }
 }
 
-/**
- * Supabase (PostgreSQL) tablolarındaki kalıcı verileri çekip yerel SQLite motoruna senkronize eder.
- * Eğer Supabase tabloları yeni oluşturulmuş ve boşsa, başlangıç verilerini otomatik olarak Supabase'e yükler.
- */
-export async function pullFromSupabaseIfNeeded(
-  db: DatabaseSync,
-  force = false,
-): Promise<void> {
-  const cfg = getSupabaseConfig();
-  if (!cfg.enabled) return;
-
-  if (!force && Date.now() - lastPullTime < PULL_TTL_MS) {
-    return;
-  }
-
+async function executePullFromSupabase(db: DatabaseSync): Promise<void> {
   try {
-    // Önce users tablosunu kontrol et
-    const usersRes = await supabaseFetch("users?select=*");
+    // Tüm tabloları tek seferde paralel çek (Waterfall gecikmesini önler)
+    const responses = await Promise.all(
+      TABLES_IN_ORDER.map((t) => supabaseFetch(`${t.name}?select=*`)),
+    );
+
+    const usersRes = responses[0];
     if (!usersRes || !usersRes.ok) {
-      // Tablolar henüz oluşturulmamış veya ağ erişimi yok -> yerel veritabanı ile devam et
       return;
     }
 
     const remoteUsers = (await usersRes.json()) as Array<Record<string, unknown>>;
     if (!Array.isArray(remoteUsers)) return;
 
-    // Eğer Supabase'de tablo yeni açılmış ve henüz hiç kullanıcı yoksa: yerel başlangıç verisini Supabase'e yükle!
     if (remoteUsers.length === 0) {
       await pushAllToSupabase(db);
       return;
     }
 
-    // Diğer tüm tabloları paralel olarak Supabase'den çek
-    const otherTables = TABLES_IN_ORDER.slice(1);
-    const responses = await Promise.all(
-      otherTables.map((t) => supabaseFetch(`${t.name}?select=*`)),
-    );
-
     const tableDataMap = new Map<string, Array<Record<string, unknown>>>();
     tableDataMap.set("users", remoteUsers);
 
-    for (let i = 0; i < otherTables.length; i++) {
+    for (let i = 1; i < TABLES_IN_ORDER.length; i++) {
       const r = responses[i];
       if (!r || !r.ok) return;
       const rows = (await r.json()) as Array<Record<string, unknown>>;
       if (!Array.isArray(rows)) return;
-      tableDataMap.set(otherTables[i].name, rows);
+      tableDataMap.set(TABLES_IN_ORDER[i].name, rows);
     }
 
-    // Atomik olarak yerel SQLite tablolarını Supabase verileriyle güncelle
+    // Varsayılan 5 ürünün görselleri eski Base64 formatındaysa hızlı CDN yoluna (/uploads/*.jpg) dönüştür
+    let needsProductImageCleanupPush = false;
+    const productRows = tableDataMap.get("products") ?? [];
+    for (const pRow of productRows) {
+      const pid = String(pRow.id ?? "");
+      if (STATIC_PRODUCT_IMAGE_MAP[pid] && typeof pRow.image_url === "string" && pRow.image_url.startsWith("data:image/")) {
+        pRow.image_url = STATIC_PRODUCT_IMAGE_MAP[pid];
+        needsProductImageCleanupPush = true;
+      }
+    }
+
     db.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE TRANSACTION;");
     try {
       for (const t of TABLES_IN_ORDER) {
@@ -157,6 +199,7 @@ export async function pullFromSupabaseIfNeeded(
       }
       db.exec("COMMIT; PRAGMA foreign_keys = ON;");
       lastPullTime = Date.now();
+      hasCompletedInitialPull = true;
     } catch {
       try {
         db.exec("ROLLBACK; PRAGMA foreign_keys = ON;");
@@ -164,8 +207,41 @@ export async function pullFromSupabaseIfNeeded(
         // Ignore
       }
     }
+
+    if (needsProductImageCleanupPush) {
+      pushAllToSupabase(db).catch(() => {});
+    }
   } catch {
     // Ağ hatası durumunda yerel veritabanı kesintisiz çalışmaya devam eder
+  }
+}
+
+/**
+ * Supabase (PostgreSQL) tablolarındaki kalıcı verileri çekip yerel SQLite motoruna senkronize eder.
+ * Single-flight kilidi ve Stale-While-Revalidate (arka plan yenileme) ile sayfa açılışlarını bloklamaz.
+ */
+export async function pullFromSupabaseIfNeeded(
+  db: DatabaseSync,
+  force = false,
+): Promise<void> {
+  const cfg = getSupabaseConfig();
+  if (!cfg.enabled) return;
+
+  const isFresh = Date.now() - lastPullTime < PULL_TTL_MS;
+  if (!force && isFresh) {
+    return;
+  }
+
+  if (!inFlightPull) {
+    inFlightPull = executePullFromSupabase(db).finally(() => {
+      inFlightPull = null;
+    });
+  }
+
+  // Yazma (POST/PUT/DELETE) işlemlerinde veya ilk soğuk başlangıçta senkron bekle,
+  // sonraki GET isteklerinde ise yanıtı anında (0ms) döndürüp arka planda güncelle (Stale-While-Revalidate).
+  if (force || !hasCompletedInitialPull) {
+    await inFlightPull;
   }
 }
 

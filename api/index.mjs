@@ -1797,15 +1797,17 @@ function seedDatabase(db) {
   if (legacyProduct) {
     db.exec("DELETE FROM products WHERE id IN ('prd_kayseri_manti','prd_yaprak_sarma','prd_hunkar_begendi','prd_su_boregi','prd_mercimek_corbasi','prd_firin_sutlac','prd_ev_acuka','prd_icli_kofte')");
   }
-  // Mevcut ürünlerde /uploads/ yolu varsa doğrudan gömülü Base64 Data-URI'ye yükselt (kesintisiz görüntüleme için)
-  const uploadPathRows = db.prepare("SELECT id, name, image_url FROM products WHERE image_url LIKE '/uploads/%'").all();
-  if (uploadPathRows.length > 0) {
-    const updateImgStmt = db.prepare("UPDATE products SET image_url = ? WHERE id = ?");
-    for (const r of uploadPathRows){
-      const fname = r.image_url.replace("/uploads/", "");
-      const dataUri = loadUploadedPhotoDataUri(fname, r.name);
-      updateImgStmt.run(dataUri, r.id);
-    }
+  // Performans optimizasyonu: 5 ana üründe devasa Base64 yerine hızlı statik CDN yollarını (/uploads/*.jpg) kullan
+  const staticImageMap = {
+    prd_kuru_incir: "/uploads/kuru-incir.jpg",
+    prd_sele_zeytin: "/uploads/sele-siyah-zeytin.jpg",
+    prd_cennet_hurmasi: "/uploads/cennet-hurmasi-kurusu.jpg",
+    prd_incir_receli: "/uploads/incir-receli.jpg",
+    prd_icli_kofte: "/uploads/icli-kofte.jpg"
+  };
+  const updateStaticImgStmt = db.prepare("UPDATE products SET image_url = ? WHERE id = ? AND image_url LIKE 'data:image/%'");
+  for (const [id, urlPath] of Object.entries(staticImageMap)){
+    updateStaticImgStmt.run(urlPath, id);
   }
   const existingUsers = db.prepare("SELECT COUNT(*) as cnt FROM users").get();
   const existingProducts = db.prepare("SELECT COUNT(*) as cnt FROM products").get();
@@ -1832,7 +1834,7 @@ function seedDatabase(db) {
       name: "Doğal Aydın Dağ İnciri (Dalında Kurutulmuş)",
       description: "Aydın dağlarının yüksek rakımlı bahçelerinde ilaçsız ve hidrojen peroksitsiz olarak dalında kurutulmuş, ince kabuklu ve içi bol ballı 1. sınıf doğal kuru incir. Üzerindeki beyazlık tamamen kendi doğal meyve şekerinin kristalleşmesidir.",
       category: "Kurutmalıklar & Doğal Meyveler",
-      imageUrl: loadUploadedPhotoDataUri("kuru-incir.jpg", "Doğal Aydın Dağ İnciri"),
+      imageUrl: "/uploads/kuru-incir.jpg",
       portionInfo: "1 Paket (500g Net)",
       allergens: [],
       prepTimeMinutes: 10,
@@ -1846,7 +1848,7 @@ function seedDatabase(db) {
       name: "Ev Yapımı Doğal Sele Siyah Zeytin",
       description: "Kasım-Aralık hasadı olgunlaşmış ince kabuklu zeytinlerin kostik veya boya kullanılmadan sadece kaya tuzu ile kendi suyunda aylarca çevrilerek tatlandırıldığı, etli ve küçük çekirdekli hakiki ev yapımı sele zeytin.",
       category: "Kahvaltılık & Zeytin",
-      imageUrl: loadUploadedPhotoDataUri("sele-siyah-zeytin.jpg", "Ev Yapımı Sele Siyah Zeytin"),
+      imageUrl: "/uploads/sele-siyah-zeytin.jpg",
       portionInfo: "1 Kavanoz / Paket (500g Net)",
       allergens: [],
       prepTimeMinutes: 10,
@@ -1860,7 +1862,7 @@ function seedDatabase(db) {
       name: "Güneşte Kurutulmuş Cennet Hurması (Trabzon Hurması)",
       description: "Tam mevsiminde toplanan cennet hurmalarının kabukları soyularak iplere dizilip dağ esintisinde ve güneşte doğal olarak kurutulmasıyla hazırlanmıştır. Dışı kendi doğal pudrası ile kaplı, içi lokum gibi yumuşaktır.",
       category: "Kurutmalıklar & Doğal Meyveler",
-      imageUrl: loadUploadedPhotoDataUri("cennet-hurmasi-kurusu.jpg", "Cennet Hurması Kurusu"),
+      imageUrl: "/uploads/cennet-hurmasi-kurusu.jpg",
       portionInfo: "1 Paket (500g Net)",
       allergens: [],
       prepTimeMinutes: 10,
@@ -1874,7 +1876,7 @@ function seedDatabase(db) {
       name: "Ev Yapımı Çıtır İncir Reçeli (Cam Kavanoz)",
       description: "Ege'nin seçme incirleriyle glikoz şurubu veya koruyucu kullanılmadan, geleneksel bakır tencerede ağır ateşte kıvamlandırılmış, çıtır çekirdekli ve yoğun aromalı ev yapımı incir reçeli.",
       category: "Ev Yapımı Reçeller",
-      imageUrl: loadUploadedPhotoDataUri("incir-receli.jpg", "Ev Yapımı Çıtır İncir Reçeli"),
+      imageUrl: "/uploads/incir-receli.jpg",
       portionInfo: "1 Cam Kavanoz (650g Net)",
       allergens: [],
       prepTimeMinutes: 10,
@@ -1888,7 +1890,7 @@ function seedDatabase(db) {
       name: "El Yapımı Kızarmış İçli Köfte (Kıymalı & Cevizli)",
       description: "İncecik açılmış çıtır bulgur dış kabuğu, içinde özel baharatlarla kavrulmuş %100 dana kıyması ve bol yerli ceviz içi ile tek tek elde kapatılıp nar gibi kızartılmış ev yapımı içli köfte.",
       category: "İçli Köfte & Ev Yemekleri",
-      imageUrl: loadUploadedPhotoDataUri("icli-kofte.jpg", "El Yapımı Kızarmış İçli Köfte"),
+      imageUrl: "/uploads/icli-kofte.jpg",
       portionInfo: "1 Porsiyon (5 Adet / ~400g)",
       allergens: [
         "Gluten",
@@ -3125,8 +3127,17 @@ const TABLES_IN_ORDER = [
     pk: "id"
   }
 ];
+const STATIC_PRODUCT_IMAGE_MAP = {
+  prd_kuru_incir: "/uploads/kuru-incir.jpg",
+  prd_sele_zeytin: "/uploads/sele-siyah-zeytin.jpg",
+  prd_cennet_hurmasi: "/uploads/cennet-hurmasi-kurusu.jpg",
+  prd_incir_receli: "/uploads/incir-receli.jpg",
+  prd_icli_kofte: "/uploads/icli-kofte.jpg"
+};
 let lastPullTime = 0;
-const PULL_TTL_MS = 3500;
+let hasCompletedInitialPull = false;
+let inFlightPull = null;
+const PULL_TTL_MS = 15000;
 async function supabaseFetch(path, options = {}) {
   const cfg = getSupabaseConfig();
   if (!cfg.enabled) return null;
@@ -3147,71 +3158,121 @@ async function supabaseFetch(path, options = {}) {
     return null;
   }
 }
+const PUSH_TIERS = [
+  [
+    {
+      name: "users",
+      pk: "id"
+    },
+    {
+      name: "products",
+      pk: "id"
+    },
+    {
+      name: "audit_logs",
+      pk: "id"
+    }
+  ],
+  [
+    {
+      name: "sessions",
+      pk: "token_hash"
+    },
+    {
+      name: "orders",
+      pk: "id"
+    },
+    {
+      name: "email_outbox",
+      pk: "id"
+    }
+  ],
+  [
+    {
+      name: "order_items",
+      pk: "id"
+    },
+    {
+      name: "refunds",
+      pk: "id"
+    }
+  ]
+];
 /**
- * Yerel SQLite tablolarındaki güncel verileri Supabase (PostgreSQL) tablolarına yazar (Upsert).
+ * Yerel SQLite tablolarındaki güncel verileri yabancı anahtar (FK) sırasını koruyarak
+ * 3 paralel dalga halinde Supabase (PostgreSQL) tablolarına yazar (Upsert).
  */ async function pushAllToSupabase(db) {
   const cfg = getSupabaseConfig();
   if (!cfg.enabled) return false;
   try {
-    for (const t of TABLES_IN_ORDER){
-      const rows = db.prepare(`SELECT * FROM ${t.name}`).all();
-      if (rows.length === 0) continue;
-      const cleanRows = rows.map((r)=>({
-          ...r
-        }));
-      const res = await supabaseFetch(`${t.name}?on_conflict=${t.pk}`, {
-        method: "POST",
-        headers: {
-          Prefer: "resolution=merge-duplicates,return=minimal"
-        },
-        body: JSON.stringify(cleanRows)
-      });
-      if (!res || !res.ok && res.status !== 201 && res.status !== 200 && res.status !== 204) {
+    for (const tier of PUSH_TIERS){
+      const results = await Promise.all(tier.map(async (t)=>{
+        const rows = db.prepare(`SELECT * FROM ${t.name}`).all();
+        if (rows.length === 0) return true;
+        const cleanRows = rows.map((r)=>{
+          const copy = {
+            ...r
+          };
+          if (t.name === "products" && typeof copy.id === "string" && STATIC_PRODUCT_IMAGE_MAP[copy.id]) {
+            if (typeof copy.image_url === "string" && copy.image_url.startsWith("data:image/")) {
+              copy.image_url = STATIC_PRODUCT_IMAGE_MAP[copy.id];
+            }
+          }
+          return copy;
+        });
+        const res = await supabaseFetch(`${t.name}?on_conflict=${t.pk}`, {
+          method: "POST",
+          headers: {
+            Prefer: "resolution=merge-duplicates,return=minimal"
+          },
+          body: JSON.stringify(cleanRows)
+        });
+        return Boolean(res && (res.ok || res.status === 201 || res.status === 200 || res.status === 204));
+      }));
+      if (!results.every(Boolean)) {
         return false;
       }
     }
     lastPullTime = Date.now();
+    hasCompletedInitialPull = true;
     return true;
   } catch  {
     return false;
   }
 }
-/**
- * Supabase (PostgreSQL) tablolarındaki kalıcı verileri çekip yerel SQLite motoruna senkronize eder.
- * Eğer Supabase tabloları yeni oluşturulmuş ve boşsa, başlangıç verilerini otomatik olarak Supabase'e yükler.
- */ async function pullFromSupabaseIfNeeded(db, force = false) {
-  const cfg = getSupabaseConfig();
-  if (!cfg.enabled) return;
-  if (!force && Date.now() - lastPullTime < PULL_TTL_MS) {
-    return;
-  }
+async function executePullFromSupabase(db) {
   try {
-    // Önce users tablosunu kontrol et
-    const usersRes = await supabaseFetch("users?select=*");
+    // Tüm tabloları tek seferde paralel çek (Waterfall gecikmesini önler)
+    const responses = await Promise.all(TABLES_IN_ORDER.map((t)=>supabaseFetch(`${t.name}?select=*`)));
+    const usersRes = responses[0];
     if (!usersRes || !usersRes.ok) {
-      // Tablolar henüz oluşturulmamış veya ağ erişimi yok -> yerel veritabanı ile devam et
       return;
     }
     const remoteUsers = await usersRes.json();
     if (!Array.isArray(remoteUsers)) return;
-    // Eğer Supabase'de tablo yeni açılmış ve henüz hiç kullanıcı yoksa: yerel başlangıç verisini Supabase'e yükle!
     if (remoteUsers.length === 0) {
       await pushAllToSupabase(db);
       return;
     }
-    // Diğer tüm tabloları paralel olarak Supabase'den çek
-    const otherTables = TABLES_IN_ORDER.slice(1);
-    const responses = await Promise.all(otherTables.map((t)=>supabaseFetch(`${t.name}?select=*`)));
     const tableDataMap = new Map();
     tableDataMap.set("users", remoteUsers);
-    for(let i = 0; i < otherTables.length; i++){
+    for(let i = 1; i < TABLES_IN_ORDER.length; i++){
       const r = responses[i];
       if (!r || !r.ok) return;
       const rows = await r.json();
       if (!Array.isArray(rows)) return;
-      tableDataMap.set(otherTables[i].name, rows);
+      tableDataMap.set(TABLES_IN_ORDER[i].name, rows);
     }
-    // Atomik olarak yerel SQLite tablolarını Supabase verileriyle güncelle
+    // Varsayılan 5 ürünün görselleri eski Base64 formatındaysa hızlı CDN yoluna (/uploads/*.jpg) dönüştür
+    let needsProductImageCleanupPush = false;
+    const productRows = tableDataMap.get("products") ?? [];
+    for (const pRow of productRows){
+      const pid = String(pRow.id ?? "");
+      if (STATIC_PRODUCT_IMAGE_MAP[pid] && typeof pRow.image_url === "string" && pRow.image_url.startsWith("data:image/")) {
+        pRow.image_url = STATIC_PRODUCT_IMAGE_MAP[pid];
+        needsProductImageCleanupPush = true;
+      }
+    }
     db.exec("PRAGMA foreign_keys = OFF; BEGIN IMMEDIATE TRANSACTION;");
     try {
       for (const t of TABLES_IN_ORDER){
@@ -3228,6 +3289,7 @@ async function supabaseFetch(path, options = {}) {
       }
       db.exec("COMMIT; PRAGMA foreign_keys = ON;");
       lastPullTime = Date.now();
+      hasCompletedInitialPull = true;
     } catch  {
       try {
         db.exec("ROLLBACK; PRAGMA foreign_keys = ON;");
@@ -3235,8 +3297,32 @@ async function supabaseFetch(path, options = {}) {
       // Ignore
       }
     }
+    if (needsProductImageCleanupPush) {
+      pushAllToSupabase(db).catch(()=>{});
+    }
   } catch  {
   // Ağ hatası durumunda yerel veritabanı kesintisiz çalışmaya devam eder
+  }
+}
+/**
+ * Supabase (PostgreSQL) tablolarındaki kalıcı verileri çekip yerel SQLite motoruna senkronize eder.
+ * Single-flight kilidi ve Stale-While-Revalidate (arka plan yenileme) ile sayfa açılışlarını bloklamaz.
+ */ async function pullFromSupabaseIfNeeded(db, force = false) {
+  const cfg = getSupabaseConfig();
+  if (!cfg.enabled) return;
+  const isFresh = Date.now() - lastPullTime < PULL_TTL_MS;
+  if (!force && isFresh) {
+    return;
+  }
+  if (!inFlightPull) {
+    inFlightPull = executePullFromSupabase(db).finally(()=>{
+      inFlightPull = null;
+    });
+  }
+  // Yazma (POST/PUT/DELETE) işlemlerinde veya ilk soğuk başlangıçta senkron bekle,
+  // sonraki GET isteklerinde ise yanıtı anında (0ms) döndürüp arka planda güncelle (Stale-While-Revalidate).
+  if (force || !hasCompletedInitialPull) {
+    await inFlightPull;
   }
 }
 async function deleteRowInSupabase(table, pkCol, pkVal) {
@@ -3246,13 +3332,61 @@ async function deleteRowInSupabase(table, pkCol, pkVal) {
 }
 
 // --- src/ui/indexHtml.ts ---
-function renderIndexHtml() {
+function escapeServerHtml(s) {
+  if (s === null || s === undefined) return "";
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function renderIndexHtml(initialProducts = []) {
+  const categories = [
+    "Tümü",
+    ...Array.from(new Set(initialProducts.map((p)=>String(p.category ?? "")))).filter(Boolean)
+  ];
+  const ssrCategoriesHtml = categories.map((c, idx)=>`<button class="cat-pill ${idx === 0 ? "active" : ""}" onclick="selectCategory('${escapeServerHtml(c)}')">${escapeServerHtml(c)}</button>`).join("");
+  const ssrProductsHtml = initialProducts.map((p, idx)=>{
+    const dailyStock = Number(p.dailyStock ?? 0);
+    const stockClass = dailyStock === 0 ? "stock-out" : dailyStock <= 5 ? "stock-low" : "stock-ok";
+    const stockText = dailyStock === 0 ? "Bugün Tükendi" : dailyStock <= 5 ? `Son ${dailyStock} Porsiyon!` : `Günlük Stok: ${dailyStock}`;
+    const allergens = Array.isArray(p.allergens) ? p.allergens : [];
+    const allergensHtml = allergens.map((a)=>`<span class="allergen-chip">⚠️ ${escapeServerHtml(a)}</span>`).join("");
+    const imgPriorityAttr = idx < 2 ? 'fetchpriority="high"' : 'loading="lazy"';
+    const pid = escapeServerHtml(p.id);
+    return `
+          <article class="product-card">
+            <div class="product-img-wrap" onclick="openProductDetail('${pid}')" style="cursor:pointer;">
+              <img src="${escapeServerHtml(p.imageUrl)}" alt="${escapeServerHtml(p.name)}" width="540" height="540" decoding="async" ${imgPriorityAttr} />
+              <span class="cat-tag">${escapeServerHtml(p.category)}</span>
+              <span class="stock-pill ${stockClass}">${stockText}</span>
+            </div>
+            <div class="product-body">
+              <div class="product-title" onclick="openProductDetail('${pid}')" style="cursor:pointer;">${escapeServerHtml(p.name)}</div>
+              <div class="product-meta">
+                <span>⚖️ ${escapeServerHtml(p.portionInfo)}</span>
+                <span>⏱️ ${Number(p.prepTimeMinutes ?? 10)} dk</span>
+              </div>
+              <p class="product-desc">${escapeServerHtml(p.description)}</p>
+              <div class="allergen-list">${allergensHtml}</div>
+            </div>
+            <div class="product-footer">
+              <div class="price-tag">${escapeServerHtml(p.priceFormatted)}</div>
+              <div style="display:flex;gap:6px;">
+                <button class="btn btn-sm btn-outline" onclick="openProductDetail('${pid}')">Detay</button>
+                <button class="btn btn-sm btn-primary" ${dailyStock <= 0 ? "disabled" : ""} onclick="addToCart('${pid}', 1)">
+                  ${dailyStock <= 0 ? "Tükendi" : "➕ Sepete Ekle"}
+                </button>
+              </div>
+            </div>
+          </article>`;
+  }).join("");
+  const firstImageUrl = initialProducts.length > 0 && typeof initialProducts[0].imageUrl === "string" ? initialProducts[0].imageUrl : "/uploads/incir-receli.jpg";
+  const serializedInitialProducts = JSON.stringify(initialProducts).replace(/</g, "\\u003c");
   return `<!DOCTYPE html>
 <html lang="tr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Katkısız, doğal ev yapımı lezzetler: dalında kurutulmuş Aydın dağ inciri, doğal fermente sele siyah zeytin, cennet hurması kurusu, çıtır incir reçeli ve el yapımı içli köfte sipariş platformu." />
   <title>Ev Yemeklerim — Günlük Taze Ev Yemekleri & Doğal Ürünler</title>
+  <link rel="preload" as="image" href="${escapeServerHtml(firstImageUrl)}" fetchpriority="high" />
   <style>
     :root {
       --bg: #faf7f2;
@@ -3789,7 +3923,12 @@ function renderIndexHtml() {
       </nav>
 
       <div class="header-actions">
-        <div id="auth-area"></div>
+        <div id="auth-area">
+          <div style="display:flex;gap:6px;">
+            <button class="btn btn-sm btn-outline" style="color:#fff;border-color:rgba(255,255,255,0.35);" onclick="openAuthModal('login')">🔑 Giriş Yap</button>
+            <button class="btn btn-sm btn-primary" onclick="openAuthModal('register')">✨ Üye Ol</button>
+          </div>
+        </div>
         <button class="cart-trigger" onclick="openCartModal()">
           🛒 Sepetim <span class="cart-badge" id="cart-count">0</span>
         </button>
@@ -3815,10 +3954,10 @@ function renderIndexHtml() {
     <!-- VIEW 1: STOREFRONT -->
     <div id="view-store">
       <div class="filter-bar">
-        <div class="category-pills" id="category-pills"></div>
+        <div class="category-pills" id="category-pills">${ssrCategoriesHtml}</div>
         <input type="search" id="search-box" class="search-input" placeholder="Yemek, malzeme veya kategori ara..." oninput="renderStorefront()" />
       </div>
-      <div class="product-grid" id="product-grid"></div>
+      <div class="product-grid" id="product-grid">${ssrProductsHtml}</div>
     </div>
 
     <!-- VIEW 2: CUSTOMER ORDERS & REFUNDS -->
@@ -4118,7 +4257,7 @@ function renderIndexHtml() {
   <script>
     let state = {
       user: null,
-      products: [],
+      products: ${serializedInitialProducts},
       adminProducts: [],
       selectedCategory: 'Tümü',
       cart: JSON.parse(localStorage.getItem('evyemek_cart') || '[]'),
@@ -4175,7 +4314,11 @@ function renderIndexHtml() {
 
     async function initApp() {
       saveCart();
-      await Promise.all([fetchCurrentUser(), fetchProducts()]);
+      if (!state.products || state.products.length === 0) {
+        await Promise.all([fetchCurrentUser(), fetchProducts()]);
+      } else {
+        fetchCurrentUser();
+      }
     }
 
     async function fetchCurrentUser() {
@@ -4320,15 +4463,16 @@ function renderIndexHtml() {
         return;
       }
 
-      grid.innerHTML = filtered.map(p => {
+      grid.innerHTML = filtered.map((p, idx) => {
         const stockClass = p.dailyStock === 0 ? 'stock-out' : (p.dailyStock <= 5 ? 'stock-low' : 'stock-ok');
         const stockText = p.dailyStock === 0 ? 'Bugün Tükendi' : (p.dailyStock <= 5 ? \`Son \${p.dailyStock} Porsiyon!\` : \`Günlük Stok: \${p.dailyStock}\`);
         const allergensHtml = (p.allergens || []).map(a => \`<span class="allergen-chip">⚠️ \${escapeHtml(a)}</span>\`).join('');
+        const imgPriority = idx < 2 ? 'fetchpriority="high"' : 'loading="lazy"';
 
         return \`
           <article class="product-card">
             <div class="product-img-wrap" onclick="openProductDetail('\${p.id}')" style="cursor:pointer;">
-              <img src="\${escapeHtml(p.imageUrl)}" alt="\${escapeHtml(p.name)}" />
+              <img src="\${escapeHtml(p.imageUrl)}" alt="\${escapeHtml(p.name)}" width="540" height="540" decoding="async" \${imgPriority} />
               <span class="cat-tag">\${escapeHtml(p.category)}</span>
               <span class="stock-pill \${stockClass}">\${stockText}</span>
             </div>
@@ -5222,15 +5366,32 @@ function createApp(db, options) {
     const path = url.pathname;
     const method = req.method.toUpperCase();
     try {
-      if (syncEnabled && path.startsWith("/api/")) {
+      // Oturum çerezi/başlığı olmayan anonim ziyaretçilerin /api/auth/me kontrolünü 0ms'de yanıtla
+      if (method === "GET" && path === "/api/auth/me") {
+        const cookieHeader = req.headers.get("cookie") ?? "";
+        const authHeader = req.headers.get("authorization") ?? "";
+        if (!cookieHeader.includes("evyemek_session=") && !authHeader.startsWith("Bearer ")) {
+          return jsonResponse({
+            user: null
+          }, 200);
+        }
+      }
+      if (syncEnabled && path.startsWith("/api/") && path !== "/api/locations") {
         await pullFromSupabaseIfNeeded(db, method !== "GET");
       }
-      // 1. Ana Sayfa & Arayüz
+      // 1. Ana Sayfa & Arayüz (SSR Ön-Yüklemeli Ürün Vitrin)
       if (method === "GET" && (path === "/" || path === "/index.html")) {
-        return new Response(renderIndexHtml(), {
+        if (syncEnabled) {
+          pullFromSupabaseIfNeeded(db, false).catch(()=>{});
+        }
+        const initialProducts = listProducts(db, {
+          includeArchived: false
+        });
+        return new Response(renderIndexHtml(initialProducts), {
           status: 200,
           headers: {
-            "content-type": "text/html; charset=utf-8"
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-cache"
           }
         });
       }
@@ -5239,7 +5400,8 @@ function createApp(db, options) {
         return new Response(svg, {
           status: 200,
           headers: {
-            "content-type": "image/svg+xml; charset=utf-8"
+            "content-type": "image/svg+xml; charset=utf-8",
+            "cache-control": "public, max-age=31536000, immutable"
           }
         });
       }
@@ -5247,28 +5409,35 @@ function createApp(db, options) {
       const uploadMatch = path.match(/^\/uploads\/([a-zA-Z0-9._-]+)$/);
       if (method === "GET" && uploadMatch) {
         const filename = uploadMatch[1];
-        try {
-          const fileBytes = await readFile(`./public/uploads/${filename}`);
-          const ext = filename.split(".").pop()?.toLowerCase() ?? "jpg";
-          const mimeMap = {
-            jpg: "image/jpeg",
-            jpeg: "image/jpeg",
-            png: "image/png",
-            webp: "image/webp",
-            svg: "image/svg+xml"
-          };
-          return new Response(new Uint8Array(fileBytes), {
-            status: 200,
-            headers: {
-              "content-type": mimeMap[ext] ?? "application/octet-stream",
-              "cache-control": "public, max-age=86400"
-            }
-          });
-        } catch  {
-          return jsonResponse({
-            error: "Görsel bulunamadı."
-          }, 404);
+        const candidatePaths = [
+          `./public/uploads/${filename}`,
+          new URL(`../public/uploads/${filename}`, import.meta.url)
+        ];
+        for (const candidate of candidatePaths){
+          try {
+            const fileBytes = await readFile(candidate);
+            const ext = filename.split(".").pop()?.toLowerCase() ?? "jpg";
+            const mimeMap = {
+              jpg: "image/jpeg",
+              jpeg: "image/jpeg",
+              png: "image/png",
+              webp: "image/webp",
+              svg: "image/svg+xml"
+            };
+            return new Response(new Uint8Array(fileBytes), {
+              status: 200,
+              headers: {
+                "content-type": mimeMap[ext] ?? "application/octet-stream",
+                "cache-control": "public, max-age=31536000, immutable"
+              }
+            });
+          } catch  {
+          // Sonraki aday dosya yolunu dene
+          }
         }
+        return jsonResponse({
+          error: "Görsel bulunamadı."
+        }, 404);
       }
       // 2. Kimlik Doğrulama (Auth) Uç Noktaları
       if (method === "POST" && path === "/api/auth/register") {
@@ -5303,13 +5472,8 @@ function createApp(db, options) {
       }
       if (method === "GET" && path === "/api/auth/me") {
         const user = getAuthenticatedUser(db, req);
-        if (!user) {
-          return jsonResponse({
-            user: null
-          }, 401);
-        }
         return jsonResponse({
-          user
+          user: user ?? null
         }, 200);
       }
       if (method === "PUT" && path === "/api/auth/profile") {
