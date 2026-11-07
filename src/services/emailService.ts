@@ -52,7 +52,7 @@ export interface EmailOutboxRecord {
   createdAt: string;
 }
 
-const ADMIN_NOTIFICATION_EMAIL = getEnv("ADMIN_EMAIL") ?? "admin@evyemeklerim.com";
+const ADMIN_NOTIFICATION_EMAIL = getEnv("ADMIN_EMAIL") ?? "admin@evlezzetlerimm.com";
 
 function escapeHtml(str: string): string {
   return str
@@ -115,7 +115,7 @@ function buildPurchaseHtml(order: OrderForEmail, isForAdmin: boolean): string {
 <body style="font-family:system-ui,-apple-system,sans-serif;background:#f5f3ef;padding:24px;color:#1f2937;">
   <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,0.06);border:1px solid #e7e2da;">
     <div style="background:linear-gradient(135deg,#9a3412,#c2410c);color:#ffffff;padding:24px;">
-      <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;opacity:0.9;">Ev Yemeklerim — Günlük Taze Mutfak</div>
+      <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;opacity:0.9;">Ev Lezzetlerimm — Günlük Taze Mutfak</div>
       <h1 style="margin:8px 0 0;font-size:22px;">${headline}</h1>
     </div>
     <div style="padding:24px;">
@@ -132,7 +132,7 @@ function buildPurchaseHtml(order: OrderForEmail, isForAdmin: boolean): string {
       </div>
     </div>
     <div style="background:#f9fafb;padding:14px 24px;font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb;">
-      Bu e-posta Ev Yemeklerim Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
+      Bu e-posta Ev Lezzetlerimm Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
     </div>
   </div>
 </body>
@@ -161,7 +161,7 @@ function buildRefundHtml(
 <body style="font-family:system-ui,-apple-system,sans-serif;background:#f5f3ef;padding:24px;color:#1f2937;">
   <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,0.06);border:1px solid #e7e2da;">
     <div style="background:${badgeColor};color:#ffffff;padding:24px;">
-      <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;opacity:0.9;">Ev Yemeklerim — İade & Müşteri Güvencesi</div>
+      <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;opacity:0.9;">Ev Lezzetlerimm — İade & Müşteri Güvencesi</div>
       <h1 style="margin:8px 0 0;font-size:22px;">${headline}</h1>
     </div>
     <div style="padding:24px;">
@@ -181,7 +181,7 @@ function buildRefundHtml(
       </div>
     </div>
     <div style="background:#f9fafb;padding:14px 24px;font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb;">
-      Bu e-posta Ev Yemeklerim Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
+      Bu e-posta Ev Lezzetlerimm Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
     </div>
   </div>
 </body>
@@ -358,7 +358,7 @@ export function processEmailOutbox(db: DatabaseSync): number {
 
   const now = new Date().toISOString();
   for (const row of pendingRows) {
-    const messageId = `<${row.id}.${Date.now()}@evyemeklerim.com>`;
+    const messageId = `<${row.id}.${Date.now()}@evlezzetlerimm.com>`;
     updateStmt.run(messageId, now, row.id);
   }
 

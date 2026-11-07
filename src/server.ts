@@ -6,9 +6,9 @@ const db = getDatabase();
 const app = createApp(db, { enableSupabaseSync: true });
 
 console.log(`============================================================`);
-console.log(`🍲 Ev Yemeklerim — E-Ticaret ve Sipariş Yönetim Platformu`);
+console.log(`🍲 Ev Lezzetlerimm — E-Ticaret ve Sipariş Yönetim Platformu`);
 console.log(`🚀 Sunucu Çalışıyor: http://localhost:${port}`);
-console.log(`👩‍🍳 Yönetici Demo : admin@evyemeklerim.com / Admin123!`);
+console.log(`👩‍🍳 Yönetici Demo : admin@evlezzetlerimm.com / Admin123!`);
 console.log(`🙋‍♀️ Müşteri Demo  : ayse@ornek.com / Musteri123!`);
 console.log(`============================================================`);
 

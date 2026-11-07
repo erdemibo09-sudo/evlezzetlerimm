@@ -46,7 +46,7 @@ Deno.test("(a) Eşzamanlı Stok Aşımı (Race Condition / Overselling) Stres Te
 
   // 1. Yönetici girişi yap ve stok adedi sadece 1 olan özel bir yemek oluştur
   const adminLogin = await callApi(app, "POST", "/api/auth/login", {
-    body: { email: "admin@evyemeklerim.com", password: "Admin123!" },
+    body: { email: "admin@evlezzetlerimm.com", password: "Admin123!" },
   });
   assertEquals(adminLogin.status, 200, "Yönetici girişi başarılı olmalı");
   const adminToken = adminLogin.data.sessionToken as string;
@@ -108,7 +108,7 @@ Deno.test("(b) Fiyat Değişimi ve Ürün Silinmesi Sonrası Geçmiş Sipariş D
   const app = createApp(db);
 
   const adminLogin = await callApi(app, "POST", "/api/auth/login", {
-    body: { email: "admin@evyemeklerim.com", password: "Admin123!" },
+    body: { email: "admin@evlezzetlerimm.com", password: "Admin123!" },
   });
   const adminToken = adminLogin.data.sessionToken as string;
 
@@ -229,7 +229,7 @@ Deno.test("(c) Satın Alma ve İade E-Postalarının (Transactional Outbox) Doğ
   const app = createApp(db);
 
   const adminLogin = await callApi(app, "POST", "/api/auth/login", {
-    body: { email: "admin@evyemeklerim.com", password: "Admin123!" },
+    body: { email: "admin@evlezzetlerimm.com", password: "Admin123!" },
   });
   const adminToken = adminLogin.data.sessionToken as string;
 
@@ -358,7 +358,7 @@ Deno.test("(d) Rol Tabanlı Yetkilendirme (RBAC) Sızdırmazlığı ve Denetim �
 
   // 3. Yöneticinin yaptığı işlemlerin audit_logs tablosuna kaydedildiğinin kanıtı
   const adminLogin = await callApi(app, "POST", "/api/auth/login", {
-    body: { email: "admin@evyemeklerim.com", password: "Admin123!" },
+    body: { email: "admin@evlezzetlerimm.com", password: "Admin123!" },
   });
   const adminToken = adminLogin.data.sessionToken as string;
 
@@ -384,7 +384,7 @@ Deno.test("(e) Deterministik Sipariş & İade Durum Makinesi (FSM) Geçişleri v
   const app = createApp(db);
 
   const adminLogin = await callApi(app, "POST", "/api/auth/login", {
-    body: { email: "admin@evyemeklerim.com", password: "Admin123!" },
+    body: { email: "admin@evlezzetlerimm.com", password: "Admin123!" },
   });
   const adminToken = adminLogin.data.sessionToken as string;
 

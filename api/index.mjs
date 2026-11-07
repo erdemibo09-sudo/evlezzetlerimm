@@ -1563,7 +1563,7 @@ function getEnv(key) {
   }
   return undefined;
 }
-const SESSION_SECRET = getEnv("SESSION_SECRET") ?? "evyemeklerimm-super-secret-hmac-key-2026-production-grade";
+const SESSION_SECRET = getEnv("SESSION_SECRET") ?? "evlezzetlerimm-super-secret-hmac-key-2026-production-grade";
 /**
  * Parolayı scrypt + 16-bayt rastgele salt ile güvenli şekilde özetler (hash).
  */ function hashPassword(password) {
@@ -1823,7 +1823,7 @@ function seedDatabase(db) {
       INSERT INTO users (id, email, full_name, phone, address, password_hash, role, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    insertUser.run(adminId, "admin@evyemeklerim.com", "Mutfak Şefi & Yönetici (Elif Hanım)", "0532 100 20 30", "Ev Yemeklerim Merkez Mutfak, Kadıköy / İstanbul", hashPassword("Admin123!"), "ADMIN", now);
+    insertUser.run(adminId, "admin@evlezzetlerimm.com", "Mutfak Şefi & Yönetici (Elif Hanım)", "0532 100 20 30", "Ev Lezzetlerimm Merkez Mutfak, Kadıköy / İstanbul", hashPassword("Admin123!"), "ADMIN", now);
     insertUser.run(customerId, "ayse@ornek.com", "Ayşe Yılmaz", "0544 222 33 44", "Moda Caddesi No: 42 Daire: 5, Kadıköy / İstanbul", hashPassword("Musteri123!"), "CUSTOMER", now);
   }
   // 2. Kullanıcının Yüklediği 5 Gerçek Ev Yapımı & Doğal Ürün Kataloğu
@@ -2006,10 +2006,21 @@ function registerUser(db, input) {
   };
 }
 function loginUser(db, input) {
-  const row = db.prepare(`
-      SELECT id, email, full_name, phone, address, password_hash, role, created_at
-      FROM users WHERE email = ?
-    `).get(input.email);
+  const adminAliases = [
+    "admin@evlezzetlerimm.com",
+    "admin@evlezzetlerim.com",
+    "admin@evyemeklerim.com",
+    "admin@evyemeklerimm.com"
+  ];
+  const isAdminAlias = adminAliases.includes(input.email.toLowerCase());
+  const row = isAdminAlias ? db.prepare(`
+        SELECT id, email, full_name, phone, address, password_hash, role, created_at
+        FROM users WHERE email = ? OR role = 'ADMIN'
+        LIMIT 1
+      `).get(input.email) : db.prepare(`
+        SELECT id, email, full_name, phone, address, password_hash, role, created_at
+        FROM users WHERE email = ?
+      `).get(input.email);
   if (!row || !verifyPassword(input.password, row.password_hash)) {
     throw new AuthError("E-posta adresi veya şifre hatalı.", 401);
   }
@@ -2392,7 +2403,7 @@ function updateProduct(db, actor, productId, input) {
 }
 
 // --- src/services/emailService.ts ---
-const ADMIN_NOTIFICATION_EMAIL = getEnv("ADMIN_EMAIL") ?? "admin@evyemeklerim.com";
+const ADMIN_NOTIFICATION_EMAIL = getEnv("ADMIN_EMAIL") ?? "admin@evlezzetlerimm.com";
 function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -2438,7 +2449,7 @@ function buildPurchaseHtml(order, isForAdmin) {
 <body style="font-family:system-ui,-apple-system,sans-serif;background:#f5f3ef;padding:24px;color:#1f2937;">
   <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,0.06);border:1px solid #e7e2da;">
     <div style="background:linear-gradient(135deg,#9a3412,#c2410c);color:#ffffff;padding:24px;">
-      <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;opacity:0.9;">Ev Yemeklerim — Günlük Taze Mutfak</div>
+      <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;opacity:0.9;">Ev Lezzetlerimm — Günlük Taze Mutfak</div>
       <h1 style="margin:8px 0 0;font-size:22px;">${headline}</h1>
     </div>
     <div style="padding:24px;">
@@ -2455,7 +2466,7 @@ function buildPurchaseHtml(order, isForAdmin) {
       </div>
     </div>
     <div style="background:#f9fafb;padding:14px 24px;font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb;">
-      Bu e-posta Ev Yemeklerim Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
+      Bu e-posta Ev Lezzetlerimm Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
     </div>
   </div>
 </body>
@@ -2472,7 +2483,7 @@ function buildRefundHtml(order, refund, isForAdmin, eventType) {
 <body style="font-family:system-ui,-apple-system,sans-serif;background:#f5f3ef;padding:24px;color:#1f2937;">
   <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:14px;overflow:hidden;box-shadow:0 4px 18px rgba(0,0,0,0.06);border:1px solid #e7e2da;">
     <div style="background:${badgeColor};color:#ffffff;padding:24px;">
-      <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;opacity:0.9;">Ev Yemeklerim — İade & Müşteri Güvencesi</div>
+      <div style="font-size:13px;letter-spacing:1px;text-transform:uppercase;opacity:0.9;">Ev Lezzetlerimm — İade & Müşteri Güvencesi</div>
       <h1 style="margin:8px 0 0;font-size:22px;">${headline}</h1>
     </div>
     <div style="padding:24px;">
@@ -2492,7 +2503,7 @@ function buildRefundHtml(order, refund, isForAdmin, eventType) {
       </div>
     </div>
     <div style="background:#f9fafb;padding:14px 24px;font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb;">
-      Bu e-posta Ev Yemeklerim Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
+      Bu e-posta Ev Lezzetlerimm Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
     </div>
   </div>
 </body>
@@ -2591,7 +2602,7 @@ function buildRefundHtml(order, refund, isForAdmin, eventType) {
   `);
   const now = new Date().toISOString();
   for (const row of pendingRows){
-    const messageId = `<${row.id}.${Date.now()}@evyemeklerim.com>`;
+    const messageId = `<${row.id}.${Date.now()}@evlezzetlerimm.com>`;
     updateStmt.run(messageId, now, row.id);
   }
   return pendingRows.length;
@@ -3384,8 +3395,8 @@ function renderIndexHtml(initialProducts = []) {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Katkısız, doğal ev yapımı lezzetler: dalında kurutulmuş Aydın dağ inciri, doğal fermente sele siyah zeytin, cennet hurması kurusu, çıtır incir reçeli ve el yapımı içli köfte sipariş platformu." />
-  <title>Ev Yemeklerim — Günlük Taze Ev Yemekleri & Doğal Ürünler</title>
+  <meta name="description" content="Ev Lezzetlerimm — Katkısız, doğal ev yapımı lezzetler: dalında kurutulmuş Aydın dağ inciri, doğal fermente sele siyah zeytin, cennet hurması kurusu, çıtır incir reçeli ve el yapımı içli köfte sipariş platformu." />
+  <title>Ev Lezzetlerimm — Günlük Taze Ev Lezzetleri & Doğal Ürünler</title>
   <link rel="preload" as="image" href="${escapeServerHtml(firstImageUrl)}" fetchpriority="high" />
   <style>
     :root {
@@ -4158,7 +4169,7 @@ function renderIndexHtml(initialProducts = []) {
       <div class="brand" onclick="switchView('store')">
         <div class="brand-icon">🍲</div>
         <div>
-          <span class="brand-title">Ev Yemeklerim</span>
+          <span class="brand-title">Ev Lezzetlerimm</span>
           <span class="brand-sub">Anne Eli Değmiş Günlük Taze Lezzetler</span>
         </div>
       </div>

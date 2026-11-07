@@ -224,10 +224,10 @@ export function seedDatabase(db: DatabaseSync): void {
 
     insertUser.run(
       adminId,
-      "admin@evyemeklerim.com",
+      "admin@evlezzetlerimm.com",
       "Mutfak Şefi & Yönetici (Elif Hanım)",
       "0532 100 20 30",
-      "Ev Yemeklerim Merkez Mutfak, Kadıköy / İstanbul",
+      "Ev Lezzetlerimm Merkez Mutfak, Kadıköy / İstanbul",
       hashPassword("Admin123!"),
       "ADMIN",
       now,

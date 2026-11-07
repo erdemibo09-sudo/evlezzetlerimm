@@ -1,4 +1,4 @@
--- Ev Yemeklerim — Supabase (PostgreSQL) Veritabanı Tablo Şeması
+-- Ev Lezzetlerimm — Supabase (PostgreSQL) Veritabanı Tablo Şeması
 -- Bu SQL kodunu Supabase sol menüdeki "SQL Editor" ekranına yapıştırıp "Run" butonuna basın.
 
 CREATE TABLE IF NOT EXISTS public.users (

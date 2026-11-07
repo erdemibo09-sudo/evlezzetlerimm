@@ -17,7 +17,7 @@ export function getEnv(key: string): string | undefined {
 }
 
 const SESSION_SECRET = getEnv("SESSION_SECRET") ??
-  "evyemeklerimm-super-secret-hmac-key-2026-production-grade";
+  "evlezzetlerimm-super-secret-hmac-key-2026-production-grade";
 
 /**
  * Parolayı scrypt + 16-bayt rastgele salt ile güvenli şekilde özetler (hash).

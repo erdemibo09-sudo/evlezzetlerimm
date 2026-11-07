@@ -77,8 +77,8 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Katkısız, doğal ev yapımı lezzetler: dalında kurutulmuş Aydın dağ inciri, doğal fermente sele siyah zeytin, cennet hurması kurusu, çıtır incir reçeli ve el yapımı içli köfte sipariş platformu." />
-  <title>Ev Yemeklerim — Günlük Taze Ev Yemekleri & Doğal Ürünler</title>
+  <meta name="description" content="Ev Lezzetlerimm — Katkısız, doğal ev yapımı lezzetler: dalında kurutulmuş Aydın dağ inciri, doğal fermente sele siyah zeytin, cennet hurması kurusu, çıtır incir reçeli ve el yapımı içli köfte sipariş platformu." />
+  <title>Ev Lezzetlerimm — Günlük Taze Ev Lezzetleri & Doğal Ürünler</title>
   <link rel="preload" as="image" href="${escapeServerHtml(firstImageUrl)}" fetchpriority="high" />
   <style>
     :root {
@@ -851,7 +851,7 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
       <div class="brand" onclick="switchView('store')">
         <div class="brand-icon">🍲</div>
         <div>
-          <span class="brand-title">Ev Yemeklerim</span>
+          <span class="brand-title">Ev Lezzetlerimm</span>
           <span class="brand-sub">Anne Eli Değmiş Günlük Taze Lezzetler</span>
         </div>
       </div>

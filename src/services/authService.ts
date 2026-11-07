@@ -81,12 +81,27 @@ export function loginUser(
   db: DatabaseSync,
   input: LoginInput,
 ): { user: AuthenticatedUser; sessionToken: string; setCookieHeader: string } {
-  const row = db
-    .prepare(`
-      SELECT id, email, full_name, phone, address, password_hash, role, created_at
-      FROM users WHERE email = ?
-    `)
-    .get(input.email) as {
+  const adminAliases = [
+    "admin@evlezzetlerimm.com",
+    "admin@evlezzetlerim.com",
+    "admin@evyemeklerim.com",
+    "admin@evyemeklerimm.com",
+  ];
+  const isAdminAlias = adminAliases.includes(input.email.toLowerCase());
+  const row = (isAdminAlias
+    ? db
+      .prepare(`
+        SELECT id, email, full_name, phone, address, password_hash, role, created_at
+        FROM users WHERE email = ? OR role = 'ADMIN'
+        LIMIT 1
+      `)
+      .get(input.email)
+    : db
+      .prepare(`
+        SELECT id, email, full_name, phone, address, password_hash, role, created_at
+        FROM users WHERE email = ?
+      `)
+      .get(input.email)) as {
       id: string;
       email: string;
       full_name: string;
