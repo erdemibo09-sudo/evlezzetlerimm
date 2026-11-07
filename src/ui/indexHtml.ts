@@ -1452,7 +1452,8 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
 
     async function initApp() {
       saveCart();
-      fetchStoreSettings();
+      renderAdminSettings();
+      fetchStoreSettings().then(() => renderAdminSettings());
       if (!state.products || state.products.length === 0) {
         await Promise.all([fetchCurrentUser(), fetchProducts()]);
       } else {
@@ -2478,36 +2479,39 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
 
     /* ADMIN FUNCTIONS */
     async function loadAdminAll() {
+      renderAdminSettings();
       if (!state.user || state.user.role !== 'ADMIN') {
         showToast('Yönetici paneline erişmek için Yönetici hesabı ile giriş yapmalısınız.', 'error');
         return;
       }
       const [statsRes, prdRes, ordRes, emlRes, audRes, cfgRes] = await Promise.all([
-        api('/api/admin/stats'),
-        api('/api/admin/products'),
-        api('/api/admin/orders'),
-        api('/api/emails'),
-        api('/api/admin/audit-logs'),
-        api('/api/admin/settings')
+        api('/api/admin/stats').catch(() => null),
+        api('/api/admin/products').catch(() => null),
+        api('/api/admin/orders').catch(() => null),
+        api('/api/emails').catch(() => null),
+        api('/api/admin/audit-logs').catch(() => null),
+        api('/api/admin/settings').catch(() => null)
       ]);
 
-      state.adminProducts = prdRes.products;
-      state.adminOrders = ordRes.orders;
-      state.emails = emlRes.emails;
-      state.auditLogs = audRes.logs;
+      if (prdRes && prdRes.products) state.adminProducts = prdRes.products;
+      if (ordRes && ordRes.orders) state.adminOrders = ordRes.orders;
+      if (emlRes && emlRes.emails) state.emails = emlRes.emails;
+      if (audRes && audRes.logs) state.auditLogs = audRes.logs;
       if (cfgRes && cfgRes.settings) {
         state.adminSettings = cfgRes.settings;
         state.storeSettings = cfgRes.settings;
       }
 
-      const s = statsRes.stats;
-      document.getElementById('admin-stats-grid').innerHTML = \`
-        <div class="stat-card"><div class="stat-label">Toplam Net Ciro</div><div class="stat-value" style="color:var(--accent);">\${s.netRevenueFormatted}</div></div>
-        <div class="stat-card"><div class="stat-label">Toplam Sipariş</div><div class="stat-value">\${s.totalOrders}</div></div>
-        <div class="stat-card"><div class="stat-label">İade Edilen Sipariş / Tutar</div><div class="stat-value" style="color:var(--danger);">\${s.refundedOrdersCount} (\${s.refundedAmountFormatted})</div></div>
-        <div class="stat-card"><div class="stat-label">Aktif Ürün / Kritik Stok</div><div class="stat-value">\${s.activeProductsCount} / <span style="color:var(--primary);">\${s.lowStockCount}</span></div></div>
-        <div class="stat-card"><div class="stat-label">Gönderilen E-Postalar</div><div class="stat-value">\${s.sentEmailsCount}</div></div>
-      \`;
+      if (statsRes && statsRes.stats) {
+        const s = statsRes.stats;
+        document.getElementById('admin-stats-grid').innerHTML = \`
+          <div class="stat-card"><div class="stat-label">Toplam Net Ciro</div><div class="stat-value" style="color:var(--accent);">\${s.netRevenueFormatted}</div></div>
+          <div class="stat-card"><div class="stat-label">Toplam Sipariş</div><div class="stat-value">\${s.totalOrders}</div></div>
+          <div class="stat-card"><div class="stat-label">İade Edilen Sipariş / Tutar</div><div class="stat-value" style="color:var(--danger);">\${s.refundedOrdersCount} (\${s.refundedAmountFormatted})</div></div>
+          <div class="stat-card"><div class="stat-label">Aktif Ürün / Kritik Stok</div><div class="stat-value">\${s.activeProductsCount} / <span style="color:var(--primary);">\${s.lowStockCount}</span></div></div>
+          <div class="stat-card"><div class="stat-label">Gönderilen E-Postalar</div><div class="stat-value">\${s.sentEmailsCount}</div></div>
+        \`;
+      }
 
       renderAdminProducts();
       renderAdminOrders();
@@ -2517,6 +2521,9 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
     }
 
     function switchAdminSubTab(tab) {
+      if (tab === 'settings') {
+        renderAdminSettings();
+      }
       ['products', 'orders', 'settings', 'outbox', 'audit'].forEach(t => {
         const subEl = document.getElementById('admin-sub-' + t);
         if (subEl) subEl.style.display = t === tab ? 'block' : 'none';

@@ -109,6 +109,12 @@ export function createApp(
 
       if (syncEnabled && path.startsWith("/api/") && path !== "/api/locations") {
         await pullFromSupabaseIfNeeded(db, method !== "GET");
+        const hasSessionCreds =
+          (req.headers.get("cookie") ?? "").includes("evyemek_session=") ||
+          (req.headers.get("authorization") ?? "").startsWith("Bearer ");
+        if (hasSessionCreds && !getAuthenticatedUser(db, req)) {
+          await pullFromSupabaseIfNeeded(db, true);
+        }
       }
 
       // 1. Ana Sayfa & Arayüz (SSR Ön-Yüklemeli Ürün Vitrin)
