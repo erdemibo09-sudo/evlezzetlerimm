@@ -464,6 +464,11 @@ async function sendViaBrevoRestApi(
   textContent: string,
 ): Promise<void> {
   if (!settings.brevoApiKey) return;
+  const normalizedTarget = recipientEmail.trim().toLowerCase();
+  const actualRecipient =
+    normalizedTarget === "admin@evyemeklerim.com" || normalizedTarget === "admin@evlezzetlerimm.com"
+      ? settings.contactEmail || "evlezzetlerimm@gmail.com"
+      : recipientEmail;
   try {
     await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
@@ -481,7 +486,7 @@ async function sendViaBrevoRestApi(
           name: "Ev Lezzetlerimm",
           email: settings.contactEmail || "evlezzetlerimm@gmail.com",
         },
-        to: [{ email: recipientEmail }],
+        to: [{ email: actualRecipient }],
         subject,
         htmlContent,
         textContent,

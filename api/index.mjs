@@ -2696,6 +2696,8 @@ function buildRefundHtml(order, refund, isForAdmin, eventType, settings) {
 }
 async function sendViaBrevoRestApi(settings, recipientEmail, subject, htmlContent, textContent) {
   if (!settings.brevoApiKey) return;
+  const normalizedTarget = recipientEmail.trim().toLowerCase();
+  const actualRecipient = normalizedTarget === "admin@evyemeklerim.com" || normalizedTarget === "admin@evlezzetlerimm.com" ? settings.contactEmail || "evlezzetlerimm@gmail.com" : recipientEmail;
   try {
     await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
@@ -2715,7 +2717,7 @@ async function sendViaBrevoRestApi(settings, recipientEmail, subject, htmlConten
         },
         to: [
           {
-            email: recipientEmail
+            email: actualRecipient
           }
         ],
         subject,
