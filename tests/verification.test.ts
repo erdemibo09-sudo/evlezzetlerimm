@@ -459,3 +459,82 @@ Deno.test("(e) Deterministik Sipariş & İade Durum Makinesi (FSM) Geçişleri v
   assertEquals(afterPrd.data.product.dailyStock, 20, "İade sonrası stok tekrar 20'ye geri yüklenmeli");
 });
 
+Deno.test("(f) IBAN Ödeme Onayı, 4 Aşamalı Sipariş Akışı ve Otomatik Kargo Teslimat Senkronizasyonu Kanıtı", async () => {
+  const db = getDatabase(":memory:");
+  const app = createApp(db);
+
+  // 1. Mağaza ayarlarında evlezzetlerimm@gmail.com ve IBAN bilgisini doğrula
+  const settingsRes = await callApi(app, "GET", "/api/store-settings");
+  assertEquals(settingsRes.status, 200, "Mağaza ayarları alınabilmeli");
+  assertEquals(settingsRes.data.settings.contactEmail, "evlezzetlerimm@gmail.com", "İletişim e-postası evlezzetlerimm@gmail.com olmalı");
+
+  const adminLogin = await callApi(app, "POST", "/api/auth/login", {
+    body: { email: "evlezzetlerimm@gmail.com", password: "Admin123!" },
+  });
+  assertEquals(adminLogin.status, 200, "evlezzetlerimm@gmail.com ile yönetici girişi yapılabilmeli");
+  const adminToken = adminLogin.data.sessionToken as string;
+
+  const custLogin = await callApi(app, "POST", "/api/auth/login", {
+    body: { email: "ayse@ornek.com", password: "Musteri123!" },
+  });
+  const custToken = custLogin.data.sessionToken as string;
+
+  // 2. Müşteri sipariş oluşturduğunda "Sipariş Alındı" (PAID) olarak başlar
+  const orderRes = await callApi(app, "POST", "/api/orders", {
+    token: custToken,
+    body: {
+      items: [{ productId: "prd_incir_receli", quantity: 1 }],
+      deliveryAddress: "Bahariye Cad. No:10 Kadıköy / İstanbul",
+    },
+  });
+  assertEquals(orderRes.status, 201, "Sipariş oluşturulmalı");
+  const orderId = orderRes.data.order.id as string;
+  assertEquals(orderRes.data.order.status, "PAID", "İlk durum PAID olmalı");
+  assertEquals(orderRes.data.order.statusLabel, "Sipariş Alındı", "İlk etiket Sipariş Alındı olmalı");
+  assertEquals(orderRes.data.order.paymentNotified, false, "Başlangıçta ödeme onayı false olmalı");
+
+  // 3. Müşteri IBAN'a parayı gönderdiğini onaylar
+  const payConfirmRes = await callApi(app, "POST", `/api/orders/${orderId}/payment-confirm`, {
+    token: custToken,
+    body: { senderName: "Ayşe Kaya" },
+  });
+  assertEquals(payConfirmRes.status, 200, "Ödeme onayı başarılı olmalı");
+  assertEquals(payConfirmRes.data.order.paymentNotified, true, "paymentNotified true olmalı");
+  assertEquals(payConfirmRes.data.order.paymentSenderName, "Ayşe Kaya", "Gönderen adı kaydedilmeli");
+
+  // 4. Yönetici ödemeyi kontrol edip "Sipariş Hazırlanıyor" (PREPARING) yapar
+  const prepRes = await callApi(app, "POST", `/api/admin/orders/${orderId}/status`, {
+    token: adminToken,
+    body: { status: "PREPARING" },
+  });
+  assertEquals(prepRes.status, 200, "PREPARING geçişi başarılı olmalı");
+  assertEquals(prepRes.data.order.status, "PREPARING", "Durum PREPARING olmalı");
+  assertEquals(prepRes.data.order.statusLabel, "Sipariş Hazırlanıyor", "Etiket Sipariş Hazırlanıyor olmalı");
+
+  // 5. Yönetici siparişi kargoya verir ("Kargoya Verildi" / SHIPPED)
+  const shipRes = await callApi(app, "POST", `/api/admin/orders/${orderId}/status`, {
+    token: adminToken,
+    body: {
+      status: "SHIPPED",
+      cargoCompany: "Yurtiçi Kargo",
+      trackingCode: "904821736451",
+    },
+  });
+  assertEquals(shipRes.status, 200, "SHIPPED geçişi başarılı olmalı");
+  assertEquals(shipRes.data.order.status, "SHIPPED", "Durum SHIPPED olmalı");
+  assertEquals(shipRes.data.order.statusLabel, "Kargoya Verildi", "Etiket Kargoya Verildi olmalı");
+  assertEquals(shipRes.data.order.cargoCompany, "Yurtiçi Kargo", "Kargo firması kaydedilmeli");
+  assertEquals(shipRes.data.order.trackingCode, "904821736451", "Takip kodu kaydedilmeli");
+
+  // 6. Kargo firmasından teslimat durumu çekildiğinde otomatik olarak "Teslim Edildi" (DELIVERED) olur
+  const syncCargoRes = await callApi(app, "POST", `/api/orders/${orderId}/sync-cargo`, {
+    token: custToken,
+    body: { simulateDelivered: true },
+  });
+  assertEquals(syncCargoRes.status, 200, "Kargo senkronizasyonu başarılı olmalı");
+  assertEquals(syncCargoRes.data.autoDelivered, true, "Otomatik teslimat true olmalı");
+  assertEquals(syncCargoRes.data.order.status, "DELIVERED", "Durum DELIVERED olmalı");
+  assertEquals(syncCargoRes.data.order.statusLabel, "Teslim Edildi", "Etiket Teslim Edildi olmalı");
+});
+
+

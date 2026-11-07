@@ -1,11 +1,12 @@
 /**
  * Sipariş ve İade Yaşam Döngüsü — Deterministik Sonlu Durum Makinesi (FSM)
- * Durumlar: PAID -> PREPARING -> DELIVERED -> REFUND_REQUESTED -> REFUNDED
+ * Durumlar: PAID (Sipariş Alındı) -> PREPARING (Sipariş Hazırlanıyor) -> SHIPPED (Kargoya Verildi) -> DELIVERED (Teslim Edildi) -> REFUND_REQUESTED -> REFUNDED
  */
 
 export type OrderStatus =
   | "PAID"
   | "PREPARING"
+  | "SHIPPED"
   | "DELIVERED"
   | "REFUND_REQUESTED"
   | "REFUNDED";
@@ -21,28 +22,43 @@ export interface TransitionRule {
 }
 
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
-  PAID: "Sipariş Alındı (Ödendi)",
-  PREPARING: "Mutfakta Hazırlanıyor",
+  PAID: "Sipariş Alındı",
+  PREPARING: "Sipariş Hazırlanıyor",
+  SHIPPED: "Kargoya Verildi",
   DELIVERED: "Teslim Edildi",
   REFUND_REQUESTED: "İade Talebi Oluşturuldu",
   REFUNDED: "İade Edildi",
 };
 
 const TRANSITION_MATRIX: TransitionRule[] = [
-  // Normal Operasyonel Akış (PAID -> PREPARING -> DELIVERED)
+  // Normal Operasyonel Akış (PAID -> PREPARING -> SHIPPED -> DELIVERED)
   {
     from: "PAID",
     to: "PREPARING",
     allowedRoles: ["ADMIN"],
     defaultRestoreStock: false,
-    description: "Sipariş mutfakta hazırlanmaya başlandı.",
+    description: "Ödeme onaylandı, sipariş hazırlanmaya başlandı.",
+  },
+  {
+    from: "PREPARING",
+    to: "SHIPPED",
+    allowedRoles: ["ADMIN"],
+    defaultRestoreStock: false,
+    description: "Sipariş kargo firmasına teslim edildi (Kargoya Verildi).",
+  },
+  {
+    from: "SHIPPED",
+    to: "DELIVERED",
+    allowedRoles: ["ADMIN", "CUSTOMER"],
+    defaultRestoreStock: false,
+    description: "Kargo firması tarafından müşteriye teslim edildi.",
   },
   {
     from: "PREPARING",
     to: "DELIVERED",
     allowedRoles: ["ADMIN"],
     defaultRestoreStock: false,
-    description: "Sipariş müşteriye teslim edildi.",
+    description: "Sipariş müşteriye doğrudan teslim edildi.",
   },
 
   // İade Talebi Akışı (-> REFUND_REQUESTED)
@@ -51,7 +67,7 @@ const TRANSITION_MATRIX: TransitionRule[] = [
     to: "REFUND_REQUESTED",
     allowedRoles: ["CUSTOMER", "ADMIN"],
     defaultRestoreStock: false,
-    description: "Ödenmiş sipariş için iade talebi açıldı.",
+    description: "Sipariş için iade/iptal talebi açıldı.",
   },
   {
     from: "PREPARING",
@@ -59,6 +75,13 @@ const TRANSITION_MATRIX: TransitionRule[] = [
     allowedRoles: ["CUSTOMER", "ADMIN"],
     defaultRestoreStock: false,
     description: "Hazırlanmakta olan sipariş için iade talebi açıldı.",
+  },
+  {
+    from: "SHIPPED",
+    to: "REFUND_REQUESTED",
+    allowedRoles: ["CUSTOMER", "ADMIN"],
+    defaultRestoreStock: false,
+    description: "Kargodaki sipariş için iade talebi açıldı.",
   },
   {
     from: "DELIVERED",
@@ -81,7 +104,7 @@ const TRANSITION_MATRIX: TransitionRule[] = [
     to: "REFUNDED",
     allowedRoles: ["CUSTOMER", "ADMIN"],
     defaultRestoreStock: true,
-    description: "Mutfağa girmeden iptal/iade edildi, stok geri yüklendi.",
+    description: "Hazırlığa girmeden iptal/iade edildi, stok geri yüklendi.",
   },
   {
     from: "PREPARING",
@@ -89,6 +112,13 @@ const TRANSITION_MATRIX: TransitionRule[] = [
     allowedRoles: ["ADMIN"],
     defaultRestoreStock: false,
     description: "Hazırlık aşamasındaki sipariş yönetici tarafından iade edildi.",
+  },
+  {
+    from: "SHIPPED",
+    to: "REFUNDED",
+    allowedRoles: ["ADMIN", "CUSTOMER"],
+    defaultRestoreStock: true,
+    description: "Kargodaki sipariş iade edildi.",
   },
   {
     from: "DELIVERED",
@@ -121,7 +151,10 @@ export function validateOrderTransition(
   actorRole: UserRole,
 ): TransitionRule {
   // Çift iade (Double-Refund) kontrolü
-  if (currentStatus === "REFUNDED" && (targetStatus === "REFUNDED" || targetStatus === "REFUND_REQUESTED")) {
+  if (
+    currentStatus === "REFUNDED" &&
+    (targetStatus === "REFUNDED" || targetStatus === "REFUND_REQUESTED")
+  ) {
     throw new OrderFsmError(
       "Bu sipariş zaten iade edilmiştir. Çift iade (double-refund) işlemi engellendi.",
       409,

@@ -270,6 +270,7 @@ export function validateRefundInput(body: Record<string, unknown>): RefundInput 
 const VALID_STATUSES: OrderStatus[] = [
   "PAID",
   "PREPARING",
+  "SHIPPED",
   "DELIVERED",
   "REFUND_REQUESTED",
   "REFUNDED",

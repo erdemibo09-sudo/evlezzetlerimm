@@ -82,6 +82,7 @@ export function loginUser(
   input: LoginInput,
 ): { user: AuthenticatedUser; sessionToken: string; setCookieHeader: string } {
   const adminAliases = [
+    "evlezzetlerimm@gmail.com",
     "admin@evlezzetlerimm.com",
     "admin@evlezzetlerim.com",
     "admin@evyemeklerim.com",

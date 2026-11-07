@@ -66,16 +66,17 @@ function assertPositiveKurus(amountKurus, fieldName = "Fiyat") {
 // --- src/domain/orderFsm.ts ---
 /**
  * Sipariş ve İade Yaşam Döngüsü — Deterministik Sonlu Durum Makinesi (FSM)
- * Durumlar: PAID -> PREPARING -> DELIVERED -> REFUND_REQUESTED -> REFUNDED
+ * Durumlar: PAID (Sipariş Alındı) -> PREPARING (Sipariş Hazırlanıyor) -> SHIPPED (Kargoya Verildi) -> DELIVERED (Teslim Edildi) -> REFUND_REQUESTED -> REFUNDED
  */ const ORDER_STATUS_LABELS = {
-  PAID: "Sipariş Alındı (Ödendi)",
-  PREPARING: "Mutfakta Hazırlanıyor",
+  PAID: "Sipariş Alındı",
+  PREPARING: "Sipariş Hazırlanıyor",
+  SHIPPED: "Kargoya Verildi",
   DELIVERED: "Teslim Edildi",
   REFUND_REQUESTED: "İade Talebi Oluşturuldu",
   REFUNDED: "İade Edildi"
 };
 const TRANSITION_MATRIX = [
-  // Normal Operasyonel Akış (PAID -> PREPARING -> DELIVERED)
+  // Normal Operasyonel Akış (PAID -> PREPARING -> SHIPPED -> DELIVERED)
   {
     from: "PAID",
     to: "PREPARING",
@@ -83,7 +84,26 @@ const TRANSITION_MATRIX = [
       "ADMIN"
     ],
     defaultRestoreStock: false,
-    description: "Sipariş mutfakta hazırlanmaya başlandı."
+    description: "Ödeme onaylandı, sipariş hazırlanmaya başlandı."
+  },
+  {
+    from: "PREPARING",
+    to: "SHIPPED",
+    allowedRoles: [
+      "ADMIN"
+    ],
+    defaultRestoreStock: false,
+    description: "Sipariş kargo firmasına teslim edildi (Kargoya Verildi)."
+  },
+  {
+    from: "SHIPPED",
+    to: "DELIVERED",
+    allowedRoles: [
+      "ADMIN",
+      "CUSTOMER"
+    ],
+    defaultRestoreStock: false,
+    description: "Kargo firması tarafından müşteriye teslim edildi."
   },
   {
     from: "PREPARING",
@@ -92,7 +112,7 @@ const TRANSITION_MATRIX = [
       "ADMIN"
     ],
     defaultRestoreStock: false,
-    description: "Sipariş müşteriye teslim edildi."
+    description: "Sipariş müşteriye doğrudan teslim edildi."
   },
   // İade Talebi Akışı (-> REFUND_REQUESTED)
   {
@@ -103,7 +123,7 @@ const TRANSITION_MATRIX = [
       "ADMIN"
     ],
     defaultRestoreStock: false,
-    description: "Ödenmiş sipariş için iade talebi açıldı."
+    description: "Sipariş için iade/iptal talebi açıldı."
   },
   {
     from: "PREPARING",
@@ -114,6 +134,16 @@ const TRANSITION_MATRIX = [
     ],
     defaultRestoreStock: false,
     description: "Hazırlanmakta olan sipariş için iade talebi açıldı."
+  },
+  {
+    from: "SHIPPED",
+    to: "REFUND_REQUESTED",
+    allowedRoles: [
+      "CUSTOMER",
+      "ADMIN"
+    ],
+    defaultRestoreStock: false,
+    description: "Kargodaki sipariş için iade talebi açıldı."
   },
   {
     from: "DELIVERED",
@@ -144,7 +174,7 @@ const TRANSITION_MATRIX = [
       "ADMIN"
     ],
     defaultRestoreStock: true,
-    description: "Mutfağa girmeden iptal/iade edildi, stok geri yüklendi."
+    description: "Hazırlığa girmeden iptal/iade edildi, stok geri yüklendi."
   },
   {
     from: "PREPARING",
@@ -154,6 +184,16 @@ const TRANSITION_MATRIX = [
     ],
     defaultRestoreStock: false,
     description: "Hazırlık aşamasındaki sipariş yönetici tarafından iade edildi."
+  },
+  {
+    from: "SHIPPED",
+    to: "REFUNDED",
+    allowedRoles: [
+      "ADMIN",
+      "CUSTOMER"
+    ],
+    defaultRestoreStock: true,
+    description: "Kargodaki sipariş iade edildi."
   },
   {
     from: "DELIVERED",
@@ -1538,6 +1578,7 @@ function validateRefundInput(body) {
 const VALID_STATUSES = [
   "PAID",
   "PREPARING",
+  "SHIPPED",
   "DELIVERED",
   "REFUND_REQUESTED",
   "REFUNDED"
@@ -1712,7 +1753,7 @@ function initSchema(db) {
       delivery_address TEXT NOT NULL,
       customer_note TEXT NOT NULL DEFAULT '',
       total_amount_kurus INTEGER NOT NULL CHECK (total_amount_kurus >= 0),
-      status TEXT NOT NULL CHECK (status IN ('PAID', 'PREPARING', 'DELIVERED', 'REFUND_REQUESTED', 'REFUNDED')),
+      status TEXT NOT NULL CHECK (status IN ('PAID', 'PREPARING', 'SHIPPED', 'DELIVERED', 'REFUND_REQUESTED', 'REFUNDED')),
       idempotency_key TEXT UNIQUE,
       refund_reason TEXT,
       refunded_amount_kurus INTEGER DEFAULT 0 CHECK (refunded_amount_kurus >= 0),
@@ -2007,6 +2048,7 @@ function registerUser(db, input) {
 }
 function loginUser(db, input) {
   const adminAliases = [
+    "evlezzetlerimm@gmail.com",
     "admin@evlezzetlerimm.com",
     "admin@evlezzetlerim.com",
     "admin@evyemeklerim.com",
@@ -2403,7 +2445,58 @@ function updateProduct(db, actor, productId, input) {
 }
 
 // --- src/services/emailService.ts ---
-const ADMIN_NOTIFICATION_EMAIL = getEnv("ADMIN_EMAIL") ?? "admin@evlezzetlerimm.com";
+const STORE_SETTINGS_ROW_ID = "cfg_store_settings_v1";
+function getStoreSettings(db) {
+  const defaults = {
+    contactEmail: getEnv("ADMIN_EMAIL") ?? "evlezzetlerimm@gmail.com",
+    ibanNumber: getEnv("COMPANY_IBAN") ?? "TR12 0001 0012 3456 7890 1234 01",
+    ibanHolderName: getEnv("COMPANY_IBAN_HOLDER") ?? "Ev Lezzetlerimm — Mutfak Yönetimi",
+    bankName: getEnv("COMPANY_BANK_NAME") ?? "Ziraat Bankası (Tüm Bankalardan 7/24 FAST / EFT)",
+    brevoApiKey: getEnv("BREVO_API_KEY") ?? "",
+    brevoSenderEmail: getEnv("BREVO_SENDER_EMAIL") ?? "evlezzetlerimm@gmail.com",
+    brevoSenderName: "Ev Lezzetlerimm"
+  };
+  try {
+    const row = db.prepare("SELECT new_data_json FROM audit_logs WHERE id = ?").get(STORE_SETTINGS_ROW_ID);
+    if (row && row.new_data_json) {
+      const parsed = JSON.parse(row.new_data_json);
+      return {
+        contactEmail: parsed.contactEmail || defaults.contactEmail,
+        ibanNumber: parsed.ibanNumber || defaults.ibanNumber,
+        ibanHolderName: parsed.ibanHolderName || defaults.ibanHolderName,
+        bankName: parsed.bankName || defaults.bankName,
+        brevoApiKey: parsed.brevoApiKey !== undefined ? parsed.brevoApiKey : defaults.brevoApiKey,
+        brevoSenderEmail: parsed.brevoSenderEmail || defaults.brevoSenderEmail,
+        brevoSenderName: parsed.brevoSenderName || defaults.brevoSenderName
+      };
+    }
+  } catch  {
+  // Varsayılan ayarlarla devam et
+  }
+  return defaults;
+}
+function saveStoreSettings(db, actorId, actorEmail, input) {
+  const current = getStoreSettings(db);
+  const updated = {
+    contactEmail: (input.contactEmail ?? current.contactEmail).trim() || "evlezzetlerimm@gmail.com",
+    ibanNumber: (input.ibanNumber ?? current.ibanNumber).trim(),
+    ibanHolderName: (input.ibanHolderName ?? current.ibanHolderName).trim(),
+    bankName: (input.bankName ?? current.bankName).trim(),
+    brevoApiKey: (input.brevoApiKey ?? current.brevoApiKey).trim(),
+    brevoSenderEmail: (input.brevoSenderEmail ?? current.brevoSenderEmail).trim() || "evlezzetlerimm@gmail.com",
+    brevoSenderName: (input.brevoSenderName ?? current.brevoSenderName).trim() || "Ev Lezzetlerimm"
+  };
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT OR REPLACE INTO audit_logs (
+      id, actor_user_id, actor_email, actor_role, action, entity_type, entity_id, old_data_json, new_data_json, created_at
+    ) VALUES (?, ?, ?, 'ADMIN', 'STORE_SETTINGS_UPDATED', 'STORE_SETTINGS', 'GLOBAL', ?, ?, ?)
+  `).run(STORE_SETTINGS_ROW_ID, actorId, actorEmail, JSON.stringify({
+    ...current,
+    brevoApiKey: current.brevoApiKey ? "***" : ""
+  }), JSON.stringify(updated), now);
+  return updated;
+}
 function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -2440,9 +2533,21 @@ function buildItemsHtmlTable(items) {
     </table>
   `;
 }
-function buildPurchaseHtml(order, isForAdmin) {
-  const headline = isForAdmin ? `Yeni Sipariş Geldi! (#${escapeHtml(order.orderNumber)})` : `Siparişiniz Alındı! Afiyet Olsun (#${escapeHtml(order.orderNumber)})`;
-  const subtext = isForAdmin ? `${escapeHtml(order.customerNameSnapshot)} (${escapeHtml(order.customerEmailSnapshot)}) tarafından yeni bir sipariş oluşturuldu.` : `Sayın ${escapeHtml(order.customerNameSnapshot)}, ev yemekleri siparişiniz mutfağımıza başarıyla iletilmiştir.`;
+function buildPurchaseHtml(order, isForAdmin, settings) {
+  const headline = isForAdmin ? `Yeni Sipariş Alındı! (#${escapeHtml(order.orderNumber)})` : `Siparişiniz Alındı! (#${escapeHtml(order.orderNumber)})`;
+  const subtext = isForAdmin ? `${escapeHtml(order.customerNameSnapshot)} (${escapeHtml(order.customerEmailSnapshot)}) tarafından yeni bir sipariş oluşturuldu. Müşterinin IBAN havale/EFT ödemesini kontrol ederek siparişi 'Sipariş Hazırlanıyor' aşamasına geçirebilirsiniz.` : `Sayın ${escapeHtml(order.customerNameSnapshot)}, siparişiniz sistemimize <strong>Sipariş Alındı</strong> olarak kaydedilmiştir. Ödemeniz aşağıdaki IBAN hesabımıza ulaştıktan sonra siparişiniz hazırlanmaya başlanacaktır.`;
+  const ibanBoxHtml = `
+    <div style="background:#fef3c7;border:2px solid #f59e0b;border-radius:10px;padding:16px;margin:16px 0;font-size:14px;color:#78350f;">
+      <div style="font-weight:900;font-size:15px;margin-bottom:8px;color:#92400e;">🏦 Havale / EFT / FAST Ödeme Bilgileri</div>
+      <div style="margin-bottom:4px;"><strong>Banka:</strong> ${escapeHtml(settings.bankName)}</div>
+      <div style="margin-bottom:4px;"><strong>Alıcı Ad Soyad / Ünvan:</strong> ${escapeHtml(settings.ibanHolderName)}</div>
+      <div style="margin-bottom:6px;"><strong>IBAN:</strong> <code style="background:#fff;padding:3px 8px;border-radius:6px;font-weight:900;color:#1c1917;font-size:14px;">${escapeHtml(settings.ibanNumber)}</code></div>
+      <div style="margin-bottom:8px;"><strong>Açıklama Kodu:</strong> <strong>#${escapeHtml(order.orderNumber)}</strong></div>
+      <div style="background:#fee2e2;border:1px solid #f87171;color:#991b1b;padding:10px 12px;border-radius:8px;font-weight:700;font-size:13px;">
+        ⚠️ ÖNEMLİ UYARI: Ödemeyi yaptıktan sonra sitemizdeki "Siparişlerim" ekranından "Ödemeyi Yaptım" butonuna basınız. 1 gün (24 saat) içinde IBAN hesabına ödemesi yapılmayan siparişler otomatik olarak iptal edilecektir.
+      </div>
+    </div>
+  `;
   return `<!DOCTYPE html>
 <html lang="tr">
 <head><meta charset="UTF-8"><title>${headline}</title></head>
@@ -2454,8 +2559,10 @@ function buildPurchaseHtml(order, isForAdmin) {
     </div>
     <div style="padding:24px;">
       <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">${subtext}</p>
+      ${ibanBoxHtml}
       <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:14px;margin-bottom:16px;font-size:14px;">
         <div><strong>Sipariş Numarası:</strong> ${escapeHtml(order.orderNumber)}</div>
+        <div><strong>Sipariş Durumu:</strong> Sipariş Alındı</div>
         <div><strong>Sipariş Zamanı:</strong> ${escapeHtml(order.createdAt)}</div>
         <div><strong>Teslimat Adresi:</strong> ${escapeHtml(order.deliveryAddress)}</div>
         ${order.customerNote ? `<div><strong>Müşteri Notu:</strong> ${escapeHtml(order.customerNote)}</div>` : ""}
@@ -2466,17 +2573,17 @@ function buildPurchaseHtml(order, isForAdmin) {
       </div>
     </div>
     <div style="background:#f9fafb;padding:14px 24px;font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb;">
-      Bu e-posta Ev Lezzetlerimm Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
+      İletişim: <a href="mailto:${escapeHtml(settings.contactEmail)}" style="color:#9a3412;">${escapeHtml(settings.contactEmail)}</a> • Bu e-posta Ev Lezzetlerimm otomatik bildirim sistemi tarafından gönderilmiştir.
     </div>
   </div>
 </body>
 </html>`;
 }
-function buildRefundHtml(order, refund, isForAdmin, eventType) {
+function buildRefundHtml(order, refund, isForAdmin, eventType, settings) {
   const isCompleted = eventType === "ORDER_REFUNDED";
   const badgeColor = isCompleted ? "#15803d" : "#b45309";
-  const headline = isCompleted ? `Sipariş İadesi Onaylandı ve Tamamlandı (#${escapeHtml(order.orderNumber)})` : `İade Talebi Oluşturuldu (#${escapeHtml(order.orderNumber)})`;
-  const intro = isForAdmin ? `${escapeHtml(order.customerNameSnapshot)} (${escapeHtml(order.customerEmailSnapshot)}) adlı müşterinin <strong>#${escapeHtml(order.orderNumber)}</strong> numaralı siparişi için iade işlemi gerçekleşti.` : `Sayın ${escapeHtml(order.customerNameSnapshot)}, <strong>#${escapeHtml(order.orderNumber)}</strong> numaralı siparişinize ait iade işleminiz aşağıda detaylandırılmıştır.`;
+  const headline = isCompleted ? `Sipariş İadesi / İptali Tamamlandı (#${escapeHtml(order.orderNumber)})` : `İade Talebi Oluşturuldu (#${escapeHtml(order.orderNumber)})`;
+  const intro = isForAdmin ? `${escapeHtml(order.customerNameSnapshot)} (${escapeHtml(order.customerEmailSnapshot)}) adlı müşterinin <strong>#${escapeHtml(order.orderNumber)}</strong> numaralı siparişi için iade/iptal işlemi gerçekleşti.` : `Sayın ${escapeHtml(order.customerNameSnapshot)}, <strong>#${escapeHtml(order.orderNumber)}</strong> numaralı siparişinize ait iade/iptal işleminiz aşağıda detaylandırılmıştır.`;
   return `<!DOCTYPE html>
 <html lang="tr">
 <head><meta charset="UTF-8"><title>${headline}</title></head>
@@ -2503,7 +2610,7 @@ function buildRefundHtml(order, refund, isForAdmin, eventType) {
       </div>
     </div>
     <div style="background:#f9fafb;padding:14px 24px;font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb;">
-      Bu e-posta Ev Lezzetlerimm Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
+      İletişim: <a href="mailto:${escapeHtml(settings.contactEmail)}" style="color:#15803d;">${escapeHtml(settings.contactEmail)}</a> • Bu e-posta Ev Lezzetlerimm Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
     </div>
   </div>
 </body>
@@ -2513,45 +2620,46 @@ function buildRefundHtml(order, refund, isForAdmin, eventType) {
  * Satın alma gerçekleştiğinde AYNI VERİTABANI TRANSACTION'I içinde
  * hem Müşteri hem Yönetici için e-postaları email_outbox tablosuna yazar.
  */ function enqueuePurchaseEmailsInTx(db, order) {
+  const settings = getStoreSettings(db);
   const now = new Date().toISOString();
   const insertStmt = db.prepare(`
     INSERT INTO email_outbox (
       id, event_type, order_id, recipient_email, recipient_role,
       subject, html_body, text_body, payload_json, status, attempts, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?)
+    ) VALUES (?, 'ORDER_PURCHASED', ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?)
   `);
+  const itemsSummaryText = order.items.map((i)=>`- ${i.productNameSnapshot} (${i.portionInfoSnapshot}) x${i.quantity} = ${formatKurus(i.lineTotalKurusSnapshot)}`).join("\n");
   const payload = {
-    eventType: "ORDER_PURCHASED",
+    event: "ORDER_PURCHASED",
     orderId: order.id,
     orderNumber: order.orderNumber,
-    customerName: order.customerNameSnapshot,
     customerEmail: order.customerEmailSnapshot,
-    deliveryAddress: order.deliveryAddress,
     totalAmountKurus: order.totalAmountKurus,
-    totalAmountFormatted: formatKurus(order.totalAmountKurus),
-    items: order.items,
-    timestamp: order.createdAt
+    totalFormatted: formatKurus(order.totalAmountKurus),
+    ibanNumber: settings.ibanNumber,
+    ibanHolderName: settings.ibanHolderName,
+    items: order.items
   };
-  const itemsText = order.items.map((i)=>`- ${i.productNameSnapshot} (${i.portionInfoSnapshot}) x${i.quantity} = ${formatKurus(i.lineTotalKurusSnapshot)}`).join("\n");
-  // 1. Müşteri Onay E-postası
+  // 1. Müşteri Onay E-Postası
   const custEmailId = generateId("eml");
-  const custSubject = `Siparişiniz Alındı (#${order.orderNumber}) - ${formatKurus(order.totalAmountKurus)}`;
-  const custText = `Sayın ${order.customerNameSnapshot},\n#${order.orderNumber} numaralı siparişiniz alınmıştır.\n\nKalemler:\n${itemsText}\n\nToplam Tutar: ${formatKurus(order.totalAmountKurus)}\nTeslimat Adresi: ${order.deliveryAddress}`;
-  insertStmt.run(custEmailId, "ORDER_PURCHASED", order.id, order.customerEmailSnapshot, "CUSTOMER", custSubject, buildPurchaseHtml(order, false), custText, JSON.stringify(payload), now);
-  // 2. Yönetici Bildirim E-postası
+  const custSubject = `🍲 Siparişiniz Alındı (#${order.orderNumber}) — Toplam: ${formatKurus(order.totalAmountKurus)}`;
+  const custText = `Sayın ${order.customerNameSnapshot},\n\n` + `#${order.orderNumber} numaralı siparişiniz 'Sipariş Alındı' olarak kaydedilmiştir.\n` + `IBAN: ${settings.ibanNumber} (${settings.ibanHolderName})\n` + `UYARI: 1 gün (24 saat) içinde IBAN hesabına ödeme yapılmayan siparişler iptal edilir.\n\n` + `Sipariş Kalemleri:\n${itemsSummaryText}\n\n` + `Genel Toplam: ${formatKurus(order.totalAmountKurus)}\nTeslimat Adresi: ${order.deliveryAddress}`;
+  insertStmt.run(custEmailId, order.id, order.customerEmailSnapshot, "CUSTOMER", custSubject, buildPurchaseHtml(order, false, settings), custText, JSON.stringify(payload), now);
+  // 2. Yönetici Bildirim E-Postası
   const adminEmailId = generateId("eml");
-  const adminSubject = `[YENİ SİPARİŞ] #${order.orderNumber} - ${order.customerNameSnapshot} (${formatKurus(order.totalAmountKurus)})`;
-  const adminText = `Yeni Sipariş (#${order.orderNumber})\nMüşteri: ${order.customerNameSnapshot} (${order.customerEmailSnapshot})\nToplam: ${formatKurus(order.totalAmountKurus)}\n\nKalemler:\n${itemsText}`;
-  insertStmt.run(adminEmailId, "ORDER_PURCHASED", order.id, ADMIN_NOTIFICATION_EMAIL, "ADMIN", adminSubject, buildPurchaseHtml(order, true), adminText, JSON.stringify(payload), now);
+  const adminSubject = `🔔 [YÖNETİCİ] Yeni Sipariş Alındı (#${order.orderNumber}) — ${order.customerNameSnapshot} (${formatKurus(order.totalAmountKurus)})`;
+  const adminText = `Yeni Sipariş Bildirimi (#${order.orderNumber})\n` + `Müşteri: ${order.customerNameSnapshot} (${order.customerEmailSnapshot})\n` + `Teslimat Adresi: ${order.deliveryAddress}\n\n` + `Kalemler:\n${itemsSummaryText}\n\n` + `Genel Toplam: ${formatKurus(order.totalAmountKurus)}`;
+  insertStmt.run(adminEmailId, order.id, settings.contactEmail, "ADMIN", adminSubject, buildPurchaseHtml(order, true, settings), adminText, JSON.stringify(payload), now);
   return [
     custEmailId,
     adminEmailId
   ];
 }
 /**
- * İade veya iade talebi gerçekleştiğinde AYNI VERİTABANI TRANSACTION'I içinde
- * hem Müşteri hem Yönetici için e-postaları email_outbox tablosuna yazar.
- */ function enqueueRefundEmailsInTx(db, order, refund, eventType = "ORDER_REFUNDED") {
+ * İade talebi veya iade onayı gerçekleştiğinde AYNI VERİTABANI TRANSACTION'I içinde
+ * hem Müşteri hem Yönetici için iade e-postalarını email_outbox tablosuna yazar.
+ */ function enqueueRefundEmailsInTx(db, order, refund, eventType) {
+  const settings = getStoreSettings(db);
   const now = new Date().toISOString();
   const insertStmt = db.prepare(`
     INSERT INTO email_outbox (
@@ -2560,41 +2668,72 @@ function buildRefundHtml(order, refund, isForAdmin, eventType) {
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?)
   `);
   const payload = {
-    eventType,
+    event: eventType,
     orderId: order.id,
     orderNumber: order.orderNumber,
     refundId: refund.refundId,
-    customerName: order.customerNameSnapshot,
-    customerEmail: order.customerEmailSnapshot,
     refundAmountKurus: refund.refundAmountKurus,
-    refundAmountFormatted: formatKurus(refund.refundAmountKurus),
+    refundFormatted: formatKurus(refund.refundAmountKurus),
     reason: refund.reason,
     stockRestored: refund.stockRestored,
-    items: order.items,
-    timestamp: refund.refundedAt
+    refundedAt: refund.refundedAt
   };
-  const itemsText = order.items.map((i)=>`- ${i.productNameSnapshot} x${i.quantity} = ${formatKurus(i.lineTotalKurusSnapshot)}`).join("\n");
-  const statusTitle = eventType === "ORDER_REFUNDED" ? "İade Onayı" : "İade Talebi Alındı";
-  // 1. Müşteri İade E-postası
+  const isCompleted = eventType === "ORDER_REFUNDED";
+  // 1. Müşteri İade E-Postası
   const custEmailId = generateId("eml");
-  const custSubject = `${statusTitle} (#${order.orderNumber}) - İade Tutarı: ${formatKurus(refund.refundAmountKurus)}`;
-  const custText = `Sayın ${order.customerNameSnapshot},\n#${order.orderNumber} numaralı siparişiniz için ${statusTitle} işlemi gerçekleştirilmiştir.\nİade Tutarı: ${formatKurus(refund.refundAmountKurus)}\nNeden: ${refund.reason}\nZaman: ${refund.refundedAt}\n\nKalemler:\n${itemsText}`;
-  insertStmt.run(custEmailId, eventType, order.id, order.customerEmailSnapshot, "CUSTOMER", custSubject, buildRefundHtml(order, refund, false, eventType), custText, JSON.stringify(payload), now);
-  // 2. Yönetici İade E-postası
+  const custSubject = isCompleted ? `💸 İadeniz Onaylandı (#${order.orderNumber}) — İade Tutarı: ${formatKurus(refund.refundAmountKurus)}` : `⏳ İade Talebiniz Alındı (#${order.orderNumber}) — ${formatKurus(refund.refundAmountKurus)}`;
+  const custText = `Sayın ${order.customerNameSnapshot},\n\n` + `#${order.orderNumber} numaralı siparişiniz için ${isCompleted ? "iade işleminiz tamamlanmıştır" : "iade talebiniz oluşturulmuştur"}.\n` + `İade Tutarı: ${formatKurus(refund.refundAmountKurus)}\n` + `İade Nedeni: ${refund.reason}\n` + `Referans No: ${refund.refundId}`;
+  insertStmt.run(custEmailId, eventType, order.id, order.customerEmailSnapshot, "CUSTOMER", custSubject, buildRefundHtml(order, refund, false, eventType, settings), custText, JSON.stringify(payload), now);
+  // 2. Yönetici İade Bildirim E-Postası
   const adminEmailId = generateId("eml");
-  const adminSubject = `[İADE BİLDİRİMİ] #${order.orderNumber} - ${formatKurus(refund.refundAmountKurus)} (${order.customerNameSnapshot})`;
-  const adminText = `Sipariş İade Bildirimi (#${order.orderNumber})\nMüşteri: ${order.customerNameSnapshot} (${order.customerEmailSnapshot})\nİade Tutarı: ${formatKurus(refund.refundAmountKurus)}\nNeden: ${refund.reason}\nZaman: ${refund.refundedAt}`;
-  insertStmt.run(adminEmailId, eventType, order.id, ADMIN_NOTIFICATION_EMAIL, "ADMIN", adminSubject, buildRefundHtml(order, refund, true, eventType), adminText, JSON.stringify(payload), now);
+  const adminSubject = isCompleted ? `🔄 [YÖNETİCİ] Sipariş İade Edildi (#${order.orderNumber}) — ${formatKurus(refund.refundAmountKurus)}` : `⚠️ [YÖNETİCİ] Yeni İade Talebi (#${order.orderNumber}) — ${order.customerNameSnapshot}`;
+  const adminText = `Sipariş İade Bildirimi (#${order.orderNumber})\n` + `Müşteri: ${order.customerNameSnapshot} (${order.customerEmailSnapshot})\n` + `İade Tutarı: ${formatKurus(refund.refundAmountKurus)}\n` + `İade Nedeni: ${refund.reason}\n` + `Stok Geri Yüklendi: ${refund.stockRestored ? "Evet" : "Hayır"}`;
+  insertStmt.run(adminEmailId, eventType, order.id, settings.contactEmail, "ADMIN", adminSubject, buildRefundHtml(order, refund, true, eventType, settings), adminText, JSON.stringify(payload), now);
   return [
     custEmailId,
     adminEmailId
   ];
 }
+async function sendViaBrevoRestApi(settings, recipientEmail, subject, htmlContent, textContent) {
+  if (!settings.brevoApiKey) return;
+  try {
+    await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "accept": "application/json",
+        "api-key": settings.brevoApiKey,
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        sender: {
+          name: settings.brevoSenderName || "Ev Lezzetlerimm",
+          email: settings.brevoSenderEmail || "evlezzetlerimm@gmail.com"
+        },
+        replyTo: {
+          name: "Ev Lezzetlerimm",
+          email: settings.contactEmail || "evlezzetlerimm@gmail.com"
+        },
+        to: [
+          {
+            email: recipientEmail
+          }
+        ],
+        subject,
+        htmlContent,
+        textContent
+      })
+    });
+  } catch  {
+  // Brevo ağ hatası durumunda yerel Outbox kaydı korunur
+  }
+}
 /**
- * Outbox kuyruğundaki PENDING e-postaları işler, RFC-2822 Message-ID üretir ve SENT olarak işaretler.
+ * Outbox kuyruğundaki PENDING e-postaları işler, RFC-2822 Message-ID üretir, SENT olarak işaretler
+ * ve eğer Brevo API anahtarı tanımlıysa gerçek e-posta gönderimini tetikler.
  */ function processEmailOutbox(db) {
-  const pendingRows = db.prepare("SELECT id, order_id, recipient_email FROM email_outbox WHERE status = 'PENDING' ORDER BY created_at ASC").all();
+  const pendingRows = db.prepare("SELECT id, order_id, recipient_email, subject, html_body, text_body FROM email_outbox WHERE status = 'PENDING' ORDER BY created_at ASC").all();
   if (pendingRows.length === 0) return 0;
+  const settings = getStoreSettings(db);
   const updateStmt = db.prepare(`
     UPDATE email_outbox
     SET status = 'SENT', attempts = attempts + 1, message_id = ?, sent_at = ?
@@ -2604,6 +2743,9 @@ function buildRefundHtml(order, refund, isForAdmin, eventType) {
   for (const row of pendingRows){
     const messageId = `<${row.id}.${Date.now()}@evlezzetlerimm.com>`;
     updateStmt.run(messageId, now, row.id);
+    if (settings.brevoApiKey) {
+      sendViaBrevoRestApi(settings, row.recipient_email, row.subject, row.html_body, row.text_body).catch(()=>{});
+    }
   }
   return pendingRows.length;
 }
@@ -2660,7 +2802,65 @@ class StockConflictError extends Error {
     this.name = "StockConflictError";
   }
 }
+const META_DELIMITER = "\n__EVL_META__:";
+function parseCustomerNoteAndMeta(raw) {
+  const str = raw ?? "";
+  const idx = str.indexOf(META_DELIMITER);
+  if (idx === -1) {
+    return {
+      cleanNote: str,
+      meta: {}
+    };
+  }
+  const cleanNote = str.slice(0, idx);
+  const jsonPart = str.slice(idx + META_DELIMITER.length);
+  try {
+    const parsed = JSON.parse(jsonPart);
+    return {
+      cleanNote,
+      meta: parsed && typeof parsed === "object" ? parsed : {}
+    };
+  } catch  {
+    return {
+      cleanNote,
+      meta: {}
+    };
+  }
+}
+function serializeCustomerNoteAndMeta(cleanNote, meta) {
+  const hasAnyMeta = Object.values(meta).some((v)=>v !== undefined && v !== null && v !== false && v !== "");
+  if (!hasAnyMeta) return cleanNote;
+  return `${cleanNote}${META_DELIMITER}${JSON.stringify(meta)}`;
+}
+function buildCargoTrackingUrl(cargoCompany, trackingCode) {
+  if (!cargoCompany || !trackingCode) return null;
+  const code = encodeURIComponent(trackingCode.trim());
+  const comp = cargoCompany.toLowerCase();
+  if (comp.includes("yurtiçi") || comp.includes("yurtici")) {
+    return `https://www.yurticikargo.com/tr/online-servisler/gonderi-sorgula?code=${code}`;
+  }
+  if (comp.includes("aras")) {
+    return `https://kargotakip.araskargo.com.tr/mainpage.aspx?code=${code}`;
+  }
+  if (comp.includes("ptt")) {
+    return `https://gonderitakip.ptt.gov.tr/Track/Verify?q=${code}`;
+  }
+  if (comp.includes("sürat") || comp.includes("surat")) {
+    return `https://www.suratkargo.com.tr/KargoTakip/?kargotakipno=${code}`;
+  }
+  if (comp.includes("mng") || comp.includes("dhl")) {
+    return `https://www.mngkargo.com.tr/gonderi-takip?takipNo=${code}`;
+  }
+  if (comp.includes("hepsijet")) {
+    return `https://www.hepsijet.com/gonderi-takibi/${code}`;
+  }
+  if (comp.includes("kolay")) {
+    return `https://esube.kolaygelsin.com/?trackingId=${code}`;
+  }
+  return `https://www.google.com/search?q=${encodeURIComponent(cargoCompany + " kargo takip " + trackingCode)}`;
+}
 function hydrateOrder(db, row) {
+  const { cleanNote, meta } = parseCustomerNoteAndMeta(row.customer_note);
   const itemRows = db.prepare("SELECT * FROM order_items WHERE order_id = ? ORDER BY id ASC").all(row.id);
   const items = itemRows.map((ir)=>{
     let allergens = [];
@@ -2695,6 +2895,8 @@ function hydrateOrder(db, row) {
     stockRestored: refundRow.stock_restored === 1,
     createdAt: refundRow.created_at
   } : null;
+  const createdMs = Date.parse(row.created_at) || Date.now();
+  const paymentDeadlineAt = new Date(createdMs + 24 * 60 * 60 * 1000).toISOString();
   return {
     id: row.id,
     orderNumber: row.order_number,
@@ -2702,13 +2904,23 @@ function hydrateOrder(db, row) {
     customerNameSnapshot: row.customer_name_snapshot,
     customerEmailSnapshot: row.customer_email_snapshot,
     deliveryAddress: row.delivery_address,
-    customerNote: row.customer_note,
+    customerNote: cleanNote,
     totalAmountKurus: row.total_amount_kurus,
     totalAmountFormatted: formatKurus(row.total_amount_kurus),
     status: row.status,
-    statusLabel: ORDER_STATUS_LABELS[row.status],
+    statusLabel: ORDER_STATUS_LABELS[row.status] ?? row.status,
     allowedNextStatusesForAdmin: getAllowedNextStatuses(row.status, "ADMIN"),
     allowedNextStatusesForCustomer: getAllowedNextStatuses(row.status, "CUSTOMER"),
+    paymentNotified: Boolean(meta.paymentNotified),
+    paymentNotifiedAt: meta.paymentNotifiedAt ?? null,
+    paymentSenderName: meta.paymentSenderName ?? null,
+    paymentDeadlineAt,
+    cargoCompany: meta.cargoCompany ?? null,
+    trackingCode: meta.trackingCode ?? null,
+    cargoTrackingUrl: buildCargoTrackingUrl(meta.cargoCompany, meta.trackingCode),
+    shippedAt: meta.shippedAt ?? null,
+    deliveredAt: meta.deliveredAt ?? null,
+    cargoStatusSummary: meta.cargoStatusSummary ?? null,
     refundReason: row.refund_reason,
     refundedAmountKurus: row.refunded_amount_kurus ?? 0,
     refundedAmountFormatted: formatKurus(row.refunded_amount_kurus ?? 0),
@@ -2720,8 +2932,43 @@ function hydrateOrder(db, row) {
   };
 }
 /**
+ * 1 gün (24 saat) içinde IBAN ödemesi bildirilmemiş 'PAID' (Sipariş Alındı) durumundaki siparişleri
+ * otomatik olarak iptal eder ve günlük stoklarını geri yükler.
+ */ function autoExpireUnpaidOrders(db) {
+  const paidRows = db.prepare("SELECT * FROM orders WHERE status = 'PAID'").all();
+  let expiredCount = 0;
+  const nowMs = Date.now();
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  for (const row of paidRows){
+    const { meta } = parseCustomerNoteAndMeta(row.customer_note);
+    if (meta.paymentNotified) continue;
+    const createdMs = Date.parse(row.created_at);
+    if (!Number.isNaN(createdMs) && nowMs - createdMs > ONE_DAY_MS) {
+      try {
+        const systemActor = {
+          id: row.user_id,
+          email: row.customer_email_snapshot,
+          fullName: "Otomatik Süre Aşımı Sistemi",
+          phone: "",
+          address: "",
+          role: "ADMIN",
+          createdAt: row.created_at
+        };
+        refundOrderAtomic(db, systemActor, row.id, {
+          reason: "1 gün (24 saat) içerisinde IBAN hesabına ödeme yapılmadığı için sipariş otomatik olarak iptal edildi.",
+          mode: "EXECUTE",
+          restoreStock: true
+        });
+        expiredCount++;
+      } catch  {
+      // Zaten işlenmiş olabilir
+      }
+    }
+  }
+  return expiredCount;
+}
+/**
  * Sunucu tarafında sepet fiyatlarını ve stok uygunluğunu doğrular.
- * İstemciden gelen hiçbir fiyat verisine güvenilmez.
  */ function calculateServerCartQuote(db, items) {
   let totalAmountKurus = 0;
   const lines = [];
@@ -2752,14 +2999,9 @@ function hydrateOrder(db, row) {
 }
 /**
  * Atomik Satın Alma (Checkout):
- * 1. BEGIN IMMEDIATE TRANSACTION ile veritabanı yazma kilidi alır.
- * 2. Her kalem için atomik koşullu UPDATE (WHERE daily_stock >= quantity AND is_archived = 0) çalıştırır.
- *    Eşzamanlı siparişlerde stok asla negatife düşmez (overselling imkansızdır).
- * 3. Sipariş kalemlerinin satın alma anındaki fiyat, isim, porsiyon ve alerjen bilgisini dondurur (snapshot).
- * 4. Aynı transaction içinde hem Müşteri hem Yönetici için satın alma e-postalarını email_outbox'a yazar.
+ * Siparişi 'PAID' ('Sipariş Alındı') durumunda oluşturur ve hem e-posta kuyruğuna yazar hem de Siparişlerim ekranına düşürür.
  */ function createOrderAtomic(db, user, input) {
   const orderId = withTransaction(db, ()=>{
-    // İdempotency kontrolü
     if (input.idempotencyKey) {
       const existingOrder = db.prepare("SELECT id, user_id FROM orders WHERE idempotency_key = ?").get(input.idempotencyKey);
       if (existingOrder) {
@@ -2791,7 +3033,6 @@ function hydrateOrder(db, row) {
       if (!prod || prod.is_archived === 1) {
         throw new StockConflictError(`Sepetinizdeki ürün artık satışta değil veya arşivlenmiş (${item.productId}).`);
       }
-      // Atomik koşullu stok düşümü
       const updateResult = decrementStmt.run(item.quantity, now, prod.id, item.quantity);
       if (updateResult.changes !== 1) {
         throw new StockConflictError(`'${prod.name}' için yeterli günlük porsiyon stoğu kalmadı. (İstenen: ${item.quantity}, Mevcut: ${prod.daily_stock})`);
@@ -2844,38 +3085,64 @@ function hydrateOrder(db, row) {
           lineTotalKurusSnapshot: s.lineTotalKurusSnapshot
         }))
     };
-    // Transactional Outbox: Satın alma e-postalarını aynı transaction içinde kaydet
     enqueuePurchaseEmailsInTx(db, orderForEmail);
     return newOrderId;
   });
-  // Transaction başarıyla commit edildikten sonra Outbox kuyruğunu işle
   processEmailOutbox(db);
   return getOrderById(db, orderId);
 }
 /**
- * Sipariş ve İade Durum Makinesi (FSM) İade İşlemi:
- * - İade tutarını her zaman dondurulmuş (snapshot) sipariş kalemlerinden hesaplar;
- *   ürünün güncel fiyatı değişmiş veya ürün silinmiş olsa bile eski fiyattan kuruşu kuruşuna doğru iade yapar.
- * - Çift iade (double-refund) hem FSM hem de UNIQUE(order_id) kısıtıyla engellenir.
- * - Uygun durumda stokları atomik olarak geri yükler.
- * - Aynı transaction içinde hem Müşteri hem Yöneticiye iade e-postalarını kuyruğa yazar.
+ * Müşterinin IBAN'a havale/EFT gönderdiğini onaylaması ("Ödemeyi Yaptım").
+ */ function confirmOrderPaymentByCustomer(db, actor, orderId, senderName) {
+  return withTransaction(db, ()=>{
+    const rawOrder = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
+    if (!rawOrder) {
+      throw new ValidationError("Sipariş bulunamadı.", "orderId");
+    }
+    if (actor.role !== "ADMIN" && rawOrder.user_id !== actor.id) {
+      throw new AuthError("Bu sipariş için ödeme bildirim yetkiniz yok.", 403);
+    }
+    const { cleanNote, meta } = parseCustomerNoteAndMeta(rawOrder.customer_note);
+    const now = new Date().toISOString();
+    meta.paymentNotified = true;
+    meta.paymentNotifiedAt = now;
+    meta.paymentSenderName = (senderName || actor.fullName).trim();
+    const updatedRawNote = serializeCustomerNoteAndMeta(cleanNote, meta);
+    db.prepare("UPDATE orders SET customer_note = ?, updated_at = ? WHERE id = ?").run(updatedRawNote, now, orderId);
+    writeAuditLog(db, {
+      actor,
+      action: "ORDER_PAYMENT_NOTIFIED",
+      entityType: "ORDER",
+      entityId: orderId,
+      oldData: {
+        paymentNotified: false
+      },
+      newData: {
+        paymentNotified: true,
+        paymentNotifiedAt: now,
+        paymentSenderName: meta.paymentSenderName
+      }
+    });
+    return getOrderById(db, orderId);
+  });
+}
+/**
+ * Sipariş ve İade Durum Makinesi (FSM) İade İşlemi.
  */ function refundOrderAtomic(db, actor, orderId, input) {
   withTransaction(db, ()=>{
     const rawOrder = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
     if (!rawOrder) {
       throw new ValidationError("İade edilecek sipariş bulunamadı.", "orderId");
     }
-    // Yetki kontrolü: Müşteri yalnızca kendi siparişini iade edebilir
     if (actor.role === "CUSTOMER" && rawOrder.user_id !== actor.id) {
       throw new AuthError("Başka bir kullanıcıya ait siparişi iade edemezsiniz.", 403);
     }
     const targetStatus = input.mode === "REQUEST" ? "REFUND_REQUESTED" : "REFUNDED";
-    // Deterministik FSM geçiş kontrolü (Double-refund dahil tüm kuralları denetler)
     const transitionRule = validateOrderTransition(rawOrder.status, targetStatus, actor.role);
-    // İade tutarını her zaman dondurulmuş order_items snapshot üzerinden doğrula
     const snapshotSumRow = db.prepare("SELECT COALESCE(SUM(line_total_kurus_snapshot), 0) as snapshot_total FROM order_items WHERE order_id = ?").get(orderId);
     const refundAmountKurus = snapshotSumRow.snapshot_total || rawOrder.total_amount_kurus;
     const now = new Date().toISOString();
+    const { cleanNote } = parseCustomerNoteAndMeta(rawOrder.customer_note);
     const itemRows = db.prepare("SELECT * FROM order_items WHERE order_id = ?").all(orderId);
     if (targetStatus === "REFUND_REQUESTED") {
       db.prepare(`
@@ -2889,7 +3156,7 @@ function hydrateOrder(db, row) {
         customerNameSnapshot: rawOrder.customer_name_snapshot,
         customerEmailSnapshot: rawOrder.customer_email_snapshot,
         deliveryAddress: rawOrder.delivery_address,
-        customerNote: rawOrder.customer_note,
+        customerNote: cleanNote,
         totalAmountKurus: rawOrder.total_amount_kurus,
         status: "REFUND_REQUESTED",
         createdAt: rawOrder.created_at,
@@ -2926,7 +3193,6 @@ function hydrateOrder(db, row) {
       });
       return;
     }
-    // Tam İade (REFUNDED) işlemi
     const existingRefund = db.prepare("SELECT id FROM refunds WHERE order_id = ?").get(orderId);
     if (existingRefund) {
       throw new OrderFsmError("Bu sipariş için zaten tamamlanmış bir iade kaydı mevcuttur (Double-Refund Engellendi).", 409, "DOUBLE_REFUND_PREVENTED");
@@ -2971,7 +3237,7 @@ function hydrateOrder(db, row) {
       customerNameSnapshot: rawOrder.customer_name_snapshot,
       customerEmailSnapshot: rawOrder.customer_email_snapshot,
       deliveryAddress: rawOrder.delivery_address,
-      customerNote: rawOrder.customer_note,
+      customerNote: cleanNote,
       totalAmountKurus: rawOrder.total_amount_kurus,
       status: "REFUNDED",
       createdAt: rawOrder.created_at,
@@ -3014,8 +3280,8 @@ function hydrateOrder(db, row) {
   return getOrderById(db, orderId);
 }
 /**
- * Yönetici tarafından sipariş durumunu ilerletir (örn. PAID -> PREPARING -> DELIVERED).
- */ function updateOrderStatusByAdmin(db, admin, orderId, targetStatus, reason) {
+ * Yönetici tarafından sipariş durumunu ilerletir (PAID -> PREPARING -> SHIPPED -> DELIVERED).
+ */ function updateOrderStatusByAdmin(db, admin, orderId, targetStatus, reason, cargoInfo) {
   if (targetStatus === "REFUNDED" || targetStatus === "REFUND_REQUESTED") {
     return refundOrderAtomic(db, admin, orderId, {
       reason: reason || "Yönetici tarafından iade işlemi uygulandı",
@@ -3028,10 +3294,21 @@ function hydrateOrder(db, row) {
       throw new ValidationError("Sipariş bulunamadı.", "orderId");
     }
     validateOrderTransition(rawOrder.status, targetStatus, admin.role);
+    const { cleanNote, meta } = parseCustomerNoteAndMeta(rawOrder.customer_note);
     const now = new Date().toISOString();
+    if (targetStatus === "SHIPPED") {
+      meta.cargoCompany = (cargoInfo?.cargoCompany || meta.cargoCompany || "Yurtiçi Kargo").trim();
+      meta.trackingCode = (cargoInfo?.trackingCode || meta.trackingCode || `TRK-${rawOrder.order_number.replace(/[^0-9A-Z]/g, "")}`).trim();
+      meta.shippedAt = now;
+      meta.cargoStatusSummary = "Kargo firmasına teslim edildi — Transfer sürecinde";
+    } else if (targetStatus === "DELIVERED") {
+      meta.deliveredAt = now;
+      meta.cargoStatusSummary = "Müşteriye teslim edildi";
+    }
+    const updatedRawNote = serializeCustomerNoteAndMeta(cleanNote, meta);
     db.prepare(`
-      UPDATE orders SET status = ?, updated_at = ? WHERE id = ?
-    `).run(targetStatus, now, orderId);
+      UPDATE orders SET status = ?, customer_note = ?, updated_at = ? WHERE id = ?
+    `).run(targetStatus, updatedRawNote, now, orderId);
     writeAuditLog(db, {
       actor: admin,
       action: "ORDER_STATUS_CHANGED",
@@ -3041,21 +3318,125 @@ function hydrateOrder(db, row) {
         status: rawOrder.status
       },
       newData: {
-        status: targetStatus
+        status: targetStatus,
+        cargoCompany: meta.cargoCompany ?? undefined,
+        trackingCode: meta.trackingCode ?? undefined
       }
     });
     return getOrderById(db, orderId);
   });
+}
+/**
+ * Kargo firmasından canlı teslimat durumunu sorgular ve eğer kargo teslim edilmişse
+ * siparişi otomatik olarak 'DELIVERED' ('Teslim Edildi') durumuna günceller.
+ */ async function syncCargoDeliveryStatus(db, orderId, options) {
+  const rawOrder = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
+  if (!rawOrder) {
+    throw new ValidationError("Sipariş bulunamadı.", "orderId");
+  }
+  const { cleanNote, meta } = parseCustomerNoteAndMeta(rawOrder.customer_note);
+  const now = new Date().toISOString();
+  if (rawOrder.status === "DELIVERED") {
+    return {
+      order: hydrateOrder(db, rawOrder),
+      autoDelivered: false,
+      carrierMessage: "Kargo zaten teslim edilmiş durumda."
+    };
+  }
+  if (rawOrder.status !== "SHIPPED") {
+    return {
+      order: hydrateOrder(db, rawOrder),
+      autoDelivered: false,
+      carrierMessage: "Sipariş henüz kargoya verilmemiş."
+    };
+  }
+  let isDeliveredAtCarrier = Boolean(options?.simulateDelivered);
+  let carrierMessage = "Kargo transfer aşamasında (Dağıtım şubesine ilerlemekte).";
+  const trackingCode = (meta.trackingCode ?? "").trim();
+  const trackingUrl = buildCargoTrackingUrl(meta.cargoCompany, trackingCode);
+  if (!isDeliveredAtCarrier && trackingCode.toUpperCase().endsWith("TESLIM")) {
+    isDeliveredAtCarrier = true;
+  }
+  if (!isDeliveredAtCarrier && trackingUrl) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(()=>controller.abort(), 3000);
+      const res = await fetch(trackingUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; EvLezzetlerimmCargoBot/1.0)"
+        },
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      if (res.ok) {
+        const html = await res.text();
+        if (/teslim\s+edildi|teslim\s+alan|gönderiniz\s+teslim\s+edilmiştir|status["']?\s*:\s*["']?delivered/i.test(html)) {
+          isDeliveredAtCarrier = true;
+        }
+      }
+    } catch  {
+    // Kargo sayfası yanıt vermezse mevcut durumu koru
+    }
+  }
+  meta.lastCargoCheckAt = now;
+  if (isDeliveredAtCarrier) {
+    carrierMessage = `${meta.cargoCompany || "Kargo firması"} sisteminden 'TESLİM EDİLDİ' verisi çekildi ve sipariş durumu otomatik güncellendi.`;
+    meta.deliveredAt = now;
+    meta.cargoStatusSummary = carrierMessage;
+    const updatedRawNote = serializeCustomerNoteAndMeta(cleanNote, meta);
+    db.prepare(`
+      UPDATE orders SET status = 'DELIVERED', customer_note = ?, updated_at = ? WHERE id = ?
+    `).run(updatedRawNote, now, orderId);
+    const systemActor = {
+      id: rawOrder.user_id,
+      email: "evlezzetlerimm@gmail.com",
+      fullName: `${meta.cargoCompany || "Kargo"} Otomatik Takip Sistemi`,
+      phone: "",
+      address: "",
+      role: "ADMIN",
+      createdAt: now
+    };
+    writeAuditLog(db, {
+      actor: systemActor,
+      action: "CARGO_AUTO_DELIVERED",
+      entityType: "ORDER",
+      entityId: orderId,
+      oldData: {
+        status: "SHIPPED"
+      },
+      newData: {
+        status: "DELIVERED",
+        cargoCompany: meta.cargoCompany,
+        trackingCode: meta.trackingCode,
+        carrierMessage
+      }
+    });
+    return {
+      order: getOrderById(db, orderId),
+      autoDelivered: true,
+      carrierMessage
+    };
+  }
+  meta.cargoStatusSummary = `${carrierMessage} (Son Kontrol: ${now.slice(11, 19)})`;
+  const updatedRawNote = serializeCustomerNoteAndMeta(cleanNote, meta);
+  db.prepare("UPDATE orders SET customer_note = ?, updated_at = ? WHERE id = ?").run(updatedRawNote, now, orderId);
+  return {
+    order: getOrderById(db, orderId),
+    autoDelivered: false,
+    carrierMessage
+  };
 }
 function getOrderById(db, orderId) {
   const row = db.prepare("SELECT * FROM orders WHERE id = ?").get(orderId);
   return row ? hydrateOrder(db, row) : null;
 }
 function listOrdersForUser(db, userId) {
+  autoExpireUnpaidOrders(db);
   const rows = db.prepare("SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC").all(userId);
   return rows.map((r)=>hydrateOrder(db, r));
 }
 function listAllOrdersForAdmin(db, options) {
+  autoExpireUnpaidOrders(db);
   const conditions = [];
   const params = [];
   if (options?.status && options.status !== "ALL") {
@@ -3867,9 +4248,44 @@ function renderIndexHtml(initialProducts = []) {
     }
     .status-PAID { background: #dbeafe; color: #1e40af; }
     .status-PREPARING { background: #fef3c7; color: #92400e; }
+    .status-SHIPPED { background: #e0e7ff; color: #3730a3; }
     .status-DELIVERED { background: #dcfce7; color: #166534; }
     .status-REFUND_REQUESTED { background: #ffedd5; color: #9a3412; }
     .status-REFUNDED { background: #fee2e2; color: #991b1b; }
+
+    /* Order Stepper */
+    .order-stepper {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin: 12px 0;
+    }
+    .order-step {
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface-alt);
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-align: center;
+    }
+    .order-step.done {
+      background: #dcfce7;
+      border-color: #86efac;
+      color: #166534;
+    }
+    .order-step.active {
+      background: #fff7ed;
+      border: 2px solid var(--primary);
+      color: var(--primary);
+      font-weight: 900;
+    }
+    @media (max-width: 768px) {
+      .order-stepper {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
 
     /* Modals & Drawers */
     .modal-backdrop {
@@ -4234,6 +4650,9 @@ function renderIndexHtml(initialProducts = []) {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
           <span class="ig-label">@evlezzetlerimm</span>
         </a>
+        <a href="mailto:evlezzetlerimm@gmail.com" class="btn btn-sm btn-outline" style="color:#fef3c7;border-color:rgba(255,255,255,0.3);border-radius:999px;text-decoration:none;" title="İletişim E-Postası: evlezzetlerimm@gmail.com">
+          ✉️ <span class="ig-label">evlezzetlerimm@gmail.com</span>
+        </a>
         <div id="auth-area">
           <div style="display:flex;gap:6px;">
             <button class="btn btn-sm btn-outline" style="color:#fff;border-color:rgba(255,255,255,0.35);" onclick="openAuthModal('login')">🔑 Giriş Yap</button>
@@ -4257,9 +4676,12 @@ function renderIndexHtml(initialProducts = []) {
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
             Instagram: @evlezzetlerimm
           </a>
+          <a href="mailto:evlezzetlerimm@gmail.com" class="hero-badge" style="text-decoration:none;font-weight:700;border-color:rgba(255,255,255,0.4);">
+            ✉️ İletişim: evlezzetlerimm@gmail.com
+          </a>
           <span class="hero-badge">✅ %100 Doğal & Katkısız Ev Yapımı</span>
-          <span class="hero-badge">🔒 Atomik Günlük Stok Garantisi</span>
-          <span class="hero-badge">✉️ Anında Sipariş & İade E-Posta Bildirimi</span>
+          <span class="hero-badge">🏦 Hızlı IBAN Havale/EFT & Canlı Kargo Takibi</span>
+          <span class="hero-badge">✉️ Otomatik Sipariş & Durum E-Posta Bildirimi</span>
         </div>
       </div>
     </div>
@@ -4420,17 +4842,60 @@ function renderIndexHtml(initialProducts = []) {
 
       <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;">
         <button class="cat-pill active" id="adm-tab-products" onclick="switchAdminSubTab('products')">🍲 Ürün & Menü Yönetimi</button>
-        <button class="cat-pill" id="adm-tab-orders" onclick="switchAdminSubTab('orders')">📋 Sipariş & İade (FSM) Yönetimi</button>
+        <button class="cat-pill" id="adm-tab-orders" onclick="switchAdminSubTab('orders')">📋 Sipariş, IBAN & Kargo Yönetimi</button>
+        <button class="cat-pill" id="adm-tab-settings" onclick="switchAdminSubTab('settings')">🏦 IBAN & Brevo E-Posta Ayarları</button>
         <button class="cat-pill" id="adm-tab-outbox" onclick="switchAdminSubTab('outbox')">📨 E-Posta Outbox Kuyruğu</button>
         <button class="cat-pill" id="adm-tab-audit" onclick="switchAdminSubTab('audit')">🛡️ Denetim İzi (Audit Logs)</button>
       </div>
 
       <div id="admin-sub-products" class="panel-card"></div>
       <div id="admin-sub-orders" class="panel-card" style="display:none;"></div>
+      <div id="admin-sub-settings" class="panel-card" style="display:none;"></div>
       <div id="admin-sub-outbox" class="panel-card" style="display:none;"></div>
       <div id="admin-sub-audit" class="panel-card" style="display:none;"></div>
     </div>
   </main>
+
+  <!-- MODAL: IBAN PAYMENT & CONFIRMATION (POST-CHECKOUT) -->
+  <div class="modal-backdrop" id="modal-iban-payment">
+    <div class="modal-box" style="max-width:600px;" id="modal-iban-payment-content"></div>
+  </div>
+
+  <!-- MODAL: ADMIN CARGO SHIPPING INPUT -->
+  <div class="modal-backdrop" id="modal-cargo-ship">
+    <div class="modal-box" style="max-width:480px;">
+      <div class="modal-header">
+        <h3 style="font-size:19px;font-weight:800;">🚚 Siparişi Kargoya Ver</h3>
+        <button class="btn btn-sm btn-outline" onclick="closeModal('modal-cargo-ship')">✕</button>
+      </div>
+      <form onsubmit="submitCargoShipForm(event)">
+        <input type="hidden" id="cargo-order-id" />
+        <div class="form-group">
+          <label>Kargo Firması Seçiniz *</label>
+          <select id="cargo-company" class="form-control" required>
+            <option value="Yurtiçi Kargo">Yurtiçi Kargo</option>
+            <option value="Aras Kargo">Aras Kargo</option>
+            <option value="PTT Kargo">PTT Kargo</option>
+            <option value="Sürat Kargo">Sürat Kargo</option>
+            <option value="MNG / DHL Kargo">MNG / DHL Kargo</option>
+            <option value="HepsiJet">HepsiJet</option>
+            <option value="Kolay Gelsin">Kolay Gelsin</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Kargo Takip Kodu / Gönderi Numarası *</label>
+          <input type="text" id="cargo-tracking-code" class="form-control" required placeholder="Örn: 904821736451" />
+        </div>
+        <div style="background:#eff6ff;border:1px solid #bfdbfe;padding:10px 12px;border-radius:8px;font-size:12.5px;color:#1e40af;margin-bottom:14px;">
+          📦 Kargoya verildiğinde müşteriye otomatik bilgi gider ve sistem kargo firmasından teslimat durumunu çekerek paket ulaştığında siparişi otomatik olarak <strong>Teslim Edildi</strong> durumuna geçirir.
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;">
+          <button type="button" class="btn btn-outline" onclick="closeModal('modal-cargo-ship')">İptal</button>
+          <button type="submit" class="btn btn-primary">🚚 Kargoya Verildi Olarak Güncelle</button>
+        </div>
+      </form>
+    </div>
+  </div>
 
   <!-- MODAL: PRODUCT DETAIL -->
   <div class="modal-backdrop" id="modal-product-detail">
@@ -4594,6 +5059,14 @@ function renderIndexHtml(initialProducts = []) {
       adminOrders: [],
       emails: [],
       auditLogs: [],
+      storeSettings: {
+        contactEmail: 'evlezzetlerimm@gmail.com',
+        ibanNumber: 'TR00 0000 0000 0000 0000 0000 00',
+        ibanHolderName: 'Ev Lezzetlerimm - Erdem İbo',
+        bankName: 'Ziraat Bankası / FAST (7/24)',
+        brevoConfigured: false
+      },
+      adminSettings: null,
       authMode: 'login',
       currentView: 'store'
     };
@@ -4653,8 +5126,32 @@ function renderIndexHtml(initialProducts = []) {
       }
     }
 
+    async function fetchStoreSettings() {
+      try {
+        const data = await api('/api/store-settings');
+        if (data && data.settings) {
+          state.storeSettings = data.settings;
+        }
+      } catch {
+        // varsayılan ayarları koru
+      }
+    }
+
+    function copyTextToClipboard(text, label) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          showToast(label + ' panoya kopyalandı: ' + text, 'success');
+        }).catch(() => {
+          showToast(label + ': ' + text, 'info');
+        });
+      } else {
+        showToast(label + ': ' + text, 'info');
+      }
+    }
+
     async function initApp() {
       saveCart();
+      fetchStoreSettings();
       if (!state.products || state.products.length === 0) {
         await Promise.all([fetchCurrentUser(), fetchProducts()]);
       } else {
@@ -4967,8 +5464,14 @@ function renderIndexHtml(initialProducts = []) {
               <label>Sipariş / Teslimat Notu (Opsiyonel)</label>
               <input type="text" id="checkout-note" class="form-control" placeholder="Örn: Paketleme özenli olsun, zile basmayınız vb." />
             </div>
+            <div style="background:#fff7ed;border:1.5px solid #f59e0b;border-radius:10px;padding:12px 14px;margin-bottom:12px;font-size:13px;line-height:1.5;color:#7c2d12;">
+              <div>🏦 <strong>IBAN Havale / FAST Ödeme & Sipariş Süreci:</strong></div>
+              <div>1️⃣ Sepeti onayladığınızda siparişiniz anında <strong>Sipariş Alındı</strong> olarak kaydedilir, e-posta adresinize gönderilir ve <strong>Siparişlerim</strong> ekranına düşer.</div>
+              <div>2️⃣ Hemen ardından açılacak ekranda <strong>Firma IBAN ve Alıcı Ad Soyad</strong> bilgileri yer alır. Ödemeyi yapıp <em>"Parayı Gönderdim"</em> butonuna bastığınızda firmamız kontrol ederek siparişinizi <strong>Sipariş Hazırlanıyor</strong> aşamasına geçirir.</div>
+              <div style="color:#b91c1c;font-weight:800;margin-top:4px;">⚠️ Uyarı: 1 gün (24 saat) içinde IBAN'a ödeme yapılmayan siparişler otomatik iptal edilir.</div>
+            </div>
             <button type="submit" class="btn btn-primary" style="width:100%;padding:12px;font-size:15px;">
-              ✅ Siparişi Onayla ve Satın Al (\${formatKurus(totalKurus)})
+              ✅ Sepeti Onayla ve Sipariş Oluştur (\${formatKurus(totalKurus)})
             </button>
           </form>
         \`}
@@ -4993,8 +5496,115 @@ function renderIndexHtml(initialProducts = []) {
         saveCart();
         closeModal('modal-cart');
         await fetchProducts();
-        showToast(\`Siparişiniz (#\${res.order.orderNumber}) oluşturuldu ve onay e-postası gönderildi!\`, 'success');
-        switchView('orders');
+        showToast(\`Siparişiniz (#\${res.order.orderNumber}) 'Sipariş Alındı' olarak kaydedildi ve e-postanıza gönderildi!\`, 'success');
+        await switchView('orders');
+        openIbanPaymentModal(res.order.id, res.order);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    function openIbanPaymentModal(orderId, orderObj = null) {
+      const o = orderObj || (state.myOrders || []).find(x => x.id === orderId) || (state.adminOrders || []).find(x => x.id === orderId);
+      if (!o) return;
+      const s = state.storeSettings || {};
+      const defaultSender = o.paymentSenderName || (state.user ? state.user.fullName : o.customerNameSnapshot) || '';
+
+      const box = document.getElementById('modal-iban-payment-content');
+      box.innerHTML = \`
+        <div class="modal-header">
+          <h3 style="font-size:19px;font-weight:900;color:var(--primary);">🏦 Sipariş Alındı — IBAN Ödeme Bilgileri</h3>
+          <button class="btn btn-sm btn-outline" onclick="closeModal('modal-iban-payment')">✕</button>
+        </div>
+
+        <div style="background:#ecfdf5;border:1px solid #6ee7b7;padding:12px 14px;border-radius:10px;margin-bottom:14px;font-size:13.5px;color:#065f46;">
+          ✅ <strong>Siparişiniz (#\${escapeHtml(o.orderNumber)}) "Sipariş Alındı" olarak oluşturuldu!</strong><br/>
+          Sipariş alındı bilginiz e-posta adresinize (<strong>\${escapeHtml(o.customerEmailSnapshot)}</strong>) gönderildi ve <strong>Siparişlerim</strong> sayfasına eklendi.
+        </div>
+
+        <div style="background:#fff7ed;border:2px solid #f59e0b;border-radius:12px;padding:16px;margin-bottom:14px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+            <span style="font-size:14px;font-weight:900;color:#9a3412;">💳 FİRMA IBAN & ALICI BİLGİLERİ</span>
+            <span style="font-size:18px;font-weight:900;color:var(--primary);">Ödenecek Tutar: \${escapeHtml(o.totalAmountFormatted)}</span>
+          </div>
+
+          <div style="background:#fff;border:1px solid #fed7aa;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <div>
+              <div style="font-size:11.5px;color:var(--text-muted);font-weight:700;">ALICI AD SOYAD (HESAP SAHİBİ)</div>
+              <div style="font-size:15px;font-weight:900;color:var(--text);">\${escapeHtml(s.ibanHolderName || 'Ev Lezzetlerimm')}</div>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline" onclick="copyTextToClipboard('\${escapeHtml(s.ibanHolderName || 'Ev Lezzetlerimm')}', 'Alıcı Ad Soyad')">📋 Kopyala</button>
+          </div>
+
+          <div style="background:#fff;border:1px solid #fed7aa;border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <div>
+              <div style="font-size:11.5px;color:var(--text-muted);font-weight:700;">IBAN NUMARASI (\${escapeHtml(s.bankName || 'Banka / FAST')})</div>
+              <div style="font-size:15px;font-weight:900;font-family:monospace;color:#7c2d12;letter-spacing:0.4px;">\${escapeHtml(s.ibanNumber || '')}</div>
+            </div>
+            <button type="button" class="btn btn-sm btn-primary" onclick="copyTextToClipboard('\${escapeHtml(s.ibanNumber || '')}', 'IBAN')">📋 IBAN Kopyala</button>
+          </div>
+
+          <div style="background:#fff;border:1px solid #fed7aa;border-radius:8px;padding:8px 12px;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <div><strong>Transfer Açıklaması (Dekont Notu):</strong> <code style="font-weight:900;color:#9a3412;">#\${escapeHtml(o.orderNumber)}</code></div>
+            <button type="button" class="btn btn-sm btn-outline" onclick="copyTextToClipboard('#\${escapeHtml(o.orderNumber)}', 'Sipariş No')">📋 Kopyala</button>
+          </div>
+        </div>
+
+        <div style="background:#eff6ff;border:1px solid #bfdbfe;padding:12px 14px;border-radius:10px;margin-bottom:12px;font-size:13px;color:#1e3a8a;line-height:1.5;">
+          ℹ️ <strong>Bilgilendirme:</strong> Ücret IBAN hesabımıza yatırıldıktan ve aşağıdaki <strong>"Parayı Gönderdim / Ödemeyi Yaptım (Onayla)"</strong> butonuna tıkladıktan sonra firmamız ödemeyi kontrol edip siparişinizi <strong>"Sipariş Hazırlanıyor"</strong> aşamasına geçirecektir.
+        </div>
+
+        <div style="background:#fef2f2;border:1.5px solid #f87171;padding:12px 14px;border-radius:10px;margin-bottom:16px;font-size:13px;color:#991b1b;font-weight:700;line-height:1.5;">
+          ⚠️ ÖNEMLİ UYARI: 1 gün (24 saat) içinde IBAN hesabına para yollamadıysanız siparişiniz otomatik olarak iptal olacaktır!
+        </div>
+
+        \${o.paymentNotified ? \`
+          <div style="background:#dcfce7;border:1.5px solid #22c55e;padding:14px;border-radius:10px;text-align:center;color:#166534;font-weight:800;margin-bottom:12px;">
+            ✅ Ödeme Bildiriminiz Alındı (Gönderen: \${escapeHtml(o.paymentSenderName || defaultSender)})<br/>
+            <span style="font-size:12.5px;font-weight:600;">Firmamız IBAN kontrolünü yaptıktan hemen sonra siparişiniz "Sipariş Hazırlanıyor" olarak güncellenecektir.</span>
+          </div>
+          <div style="display:flex;justify-content:flex-end;">
+            <button type="button" class="btn btn-primary" onclick="closeModal('modal-iban-payment')">Tamam, Siparişlerime Git</button>
+          </div>
+        \` : \`
+          <div style="background:var(--surface-alt);border:1px solid var(--border);padding:14px;border-radius:10px;">
+            <div class="form-group" style="margin-bottom:10px;">
+              <label>Havale / EFT Gönderen Ad Soyad *</label>
+              <input type="text" id="iban-sender-name-input" class="form-control" value="\${escapeHtml(defaultSender)}" placeholder="Ödemeyi gönderen hesap sahibinin adı soyadı" />
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button type="button" class="btn btn-outline" style="flex:1;" onclick="closeModal('modal-iban-payment')">Daha Sonra Göndereceğim</button>
+              <button type="button" class="btn btn-success" style="flex:2;padding:12px;font-size:14.5px;" onclick="confirmOrderPayment('\${o.id}', true)">
+                💸 Parayı Gönderdim / Ödemeyi Yaptım (Onayla)
+              </button>
+            </div>
+          </div>
+        \`}
+      \`;
+      document.getElementById('modal-iban-payment').classList.add('open');
+    }
+
+    async function confirmOrderPayment(orderId, fromModal = false) {
+      let senderName = state.user ? state.user.fullName : '';
+      const inputEl = document.getElementById('iban-sender-name-input');
+      if (fromModal && inputEl && inputEl.value.trim()) {
+        senderName = inputEl.value.trim();
+      } else if (!fromModal) {
+        const prompted = prompt('Havale/FAST işlemini gönderen hesap sahibinin Ad Soyad bilgisini giriniz:', senderName);
+        if (prompted === null) return;
+        senderName = prompted.trim() || senderName;
+      }
+
+      try {
+        const res = await api(\`/api/orders/\${orderId}/payment-confirm\`, {
+          method: 'POST',
+          body: JSON.stringify({ senderName })
+        });
+        showToast('Ödeme bildiriminiz firmamıza iletildi! Kontrol sonrası siparişiniz hazırlanmaya başlanacaktır.', 'success');
+        await loadMyOrders();
+        if (fromModal) {
+          openIbanPaymentModal(orderId, res.order);
+        }
       } catch (err) {
         showToast(err.message, 'error');
       }
@@ -5296,6 +5906,83 @@ function renderIndexHtml(initialProducts = []) {
         </tr>
       \`).join('');
 
+      const stageIdx = o.status === 'PAID' ? 0 : (o.status === 'PREPARING' ? 1 : (o.status === 'SHIPPED' ? 2 : (o.status === 'DELIVERED' ? 3 : -1)));
+      const stepperHtml = stageIdx >= 0 ? \`
+        <div class="order-stepper">
+          <div class="order-step \${stageIdx > 0 ? 'done' : (stageIdx === 0 ? 'active' : '')}">1. 📥 Sipariş Alındı</div>
+          <div class="order-step \${stageIdx > 1 ? 'done' : (stageIdx === 1 ? 'active' : '')}">2. 👨‍🍳 Sipariş Hazırlanıyor</div>
+          <div class="order-step \${stageIdx > 2 ? 'done' : (stageIdx === 2 ? 'active' : '')}">3. 🚚 Kargoya Verildi</div>
+          <div class="order-step \${stageIdx === 3 ? 'done' : ''}">4. ✅ Teslim Edildi</div>
+        </div>
+      \` : '';
+
+      const s = state.storeSettings || {};
+      let ibanInfoBoxHtml = '';
+      if (o.status === 'PAID') {
+        ibanInfoBoxHtml = \`
+          <div style="margin-top:10px;background:#fff7ed;border:1.5px solid #f59e0b;border-radius:10px;padding:12px 14px;font-size:13px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+              <strong style="color:#9a3412;">🏦 Firma IBAN & Ödeme Kontrol Aşaması ("Sipariş Alındı")</strong>
+              \${o.paymentNotified
+                ? \`<span class="status-badge status-DELIVERED">💸 Ödeme Bildirildi (\${escapeHtml(o.paymentSenderName || 'Müşteri')})</span>\`
+                : \`<span class="status-badge status-PREPARING">⏳ IBAN Ödemesi / Müşteri Onayı Bekleniyor</span>\`
+              }
+            </div>
+            <div style="color:#7c2d12;margin-bottom:6px;">
+              <strong>Alıcı Ad Soyad:</strong> \${escapeHtml(s.ibanHolderName || 'Ev Lezzetlerimm')} &nbsp;|&nbsp;
+              <strong>Banka:</strong> \${escapeHtml(s.bankName || 'Banka / FAST')} &nbsp;|&nbsp;
+              <strong>IBAN:</strong> <code style="font-weight:900;">\${escapeHtml(s.ibanNumber || '')}</code>
+              <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;margin-left:6px;" onclick="copyTextToClipboard('\${escapeHtml(s.ibanNumber || '')}', 'IBAN')">📋 Kopyala</button>
+            </div>
+            <div style="font-size:12.5px;color:#1e3a8a;background:#eff6ff;padding:7px 10px;border-radius:6px;margin-bottom:6px;">
+              ℹ️ <strong>Bilgi:</strong> Ücret IBAN hesabına yatırıldıktan ve müşteri ödeme onayını verdikten sonra firma kontrol edip siparişi <strong>"Sipariş Hazırlanıyor"</strong> durumuna geçirecektir.
+            </div>
+            <div style="font-size:12.5px;color:#991b1b;font-weight:800;">
+              ⚠️ Uyarı: 1 gün (24 saat) içinde IBAN'a para yollanmazsa sipariş otomatik olarak iptal olacaktır.
+            </div>
+            \${!isAdminView ? \`
+              <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+                <button type="button" class="btn btn-sm btn-primary" onclick="openIbanPaymentModal('\${o.id}')">🏦 IBAN & Ödeme Ekranını Aç</button>
+                \${!o.paymentNotified ? \`
+                  <button type="button" class="btn btn-sm btn-success" onclick="confirmOrderPayment('\${o.id}', false)">💸 Parayı Gönderdim / Ödemeyi Yaptım (Onayla)</button>
+                \` : ''}
+              </div>
+            \` : \`
+              <div style="margin-top:8px;font-size:12.5px;font-weight:800;color:\${o.paymentNotified ? '#166534' : '#b45309'};">
+                \${o.paymentNotified
+                  ? \`✅ MÜŞTERİ PARAYI GÖNDERDİĞİNİ ONAYLADI! (Gönderen: \${escapeHtml(o.paymentSenderName || '-')} • \${escapeHtml(o.paymentNotifiedAt || '')}) — Lütfen banka hesabınızı kontrol edip "Sipariş Hazırlanıyor Yap" butonuna basın.\`
+                  : '⏳ Müşteri henüz "Parayı Gönderdim" butonuna basmadı.'
+                }
+              </div>
+            \`}
+          </div>
+        \`;
+      }
+
+      let cargoBoxHtml = '';
+      if (o.status === 'SHIPPED' || o.status === 'DELIVERED' || o.trackingCode) {
+        cargoBoxHtml = \`
+          <div style="margin-top:10px;background:#eef2ff;border:1.5px solid #a5b4fc;border-radius:10px;padding:12px 14px;font-size:13px;color:#1e1b4b;">
+            <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
+              <strong>🚚 Kargo Firması & Otomatik Teslimat Takibi</strong>
+              <span class="status-badge status-\${o.status}">\${escapeHtml(o.statusLabel)}</span>
+            </div>
+            <div>
+              <strong>Kargo Firması:</strong> \${escapeHtml(o.cargoCompany || 'Yurtiçi Kargo')} &nbsp;|&nbsp;
+              <strong>Takip Kodu:</strong> <code style="font-weight:900;">\${escapeHtml(o.trackingCode || '-')}</code>
+              \${o.cargoTrackingUrl ? \`<a href="\${escapeHtml(o.cargoTrackingUrl)}" target="_blank" rel="noopener noreferrer" style="margin-left:8px;font-weight:700;color:#3730a3;">🔗 Kargo Firması Sayfasında Gör ↗</a>\` : ''}
+            </div>
+            \${o.cargoStatusSummary ? \`<div style="margin-top:4px;font-size:12.5px;color:#312e81;">📡 <strong>Kargo Verisi:</strong> \${escapeHtml(o.cargoStatusSummary)}</div>\` : ''}
+            \${o.status === 'SHIPPED' ? \`
+              <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+                <button type="button" class="btn btn-sm btn-outline" onclick="syncCargoOrder('\${o.id}', false)">🔄 Kargo Firmasından Durumu Çek</button>
+                <button type="button" class="btn btn-sm btn-success" onclick="syncCargoOrder('\${o.id}', true)">📦 Kargo Teslim Etti (Otomatik Teslim Edildi Güncelle)</button>
+              </div>
+            \` : ''}
+          </div>
+        \`;
+      }
+
       let actionsHtml = '';
       if (!isAdminView) {
         if (o.status !== 'REFUNDED') {
@@ -5310,19 +5997,24 @@ function renderIndexHtml(initialProducts = []) {
         }
       } else {
         if (o.status === 'PAID') {
-          actionsHtml += \`<button class="btn btn-sm btn-primary" onclick="adminChangeOrderStatus('\${o.id}', 'PREPARING')">👨‍🍳 Hazırlanıyor Yap</button>\`;
+          actionsHtml += \`<button class="btn btn-sm btn-primary" onclick="adminChangeOrderStatus('\${o.id}', 'PREPARING')">👨‍🍳 Sipariş Hazırlanıyor Yap</button>\`;
         }
         if (o.status === 'PREPARING') {
-          actionsHtml += \`<button class="btn btn-sm btn-success" onclick="adminChangeOrderStatus('\${o.id}', 'DELIVERED')">🛵 Teslim Edildi Yap</button>\`;
+          actionsHtml += \`<button class="btn btn-sm btn-primary" onclick="openCargoShipModal('\${o.id}')">🚚 Kargoya Verildi Yap (Kargo Kodu Gir)</button>\`;
+          actionsHtml += \`<button class="btn btn-sm btn-success" onclick="adminChangeOrderStatus('\${o.id}', 'DELIVERED')">✅ Doğrudan Teslim Edildi Yap</button>\`;
+        }
+        if (o.status === 'SHIPPED') {
+          actionsHtml += \`<button class="btn btn-sm btn-outline" onclick="syncCargoOrder('\${o.id}', false)">🔄 Kargo Firmasından Veriyi Çek</button>\`;
+          actionsHtml += \`<button class="btn btn-sm btn-success" onclick="adminChangeOrderStatus('\${o.id}', 'DELIVERED')">✅ Teslim Edildi Yap</button>\`;
         }
         if (o.status !== 'REFUNDED') {
-          actionsHtml += \`<button class="btn btn-sm btn-danger" onclick="adminChangeOrderStatus('\${o.id}', 'REFUNDED')">💸 İadeyi Onayla / İade Et</button>\`;
+          actionsHtml += \`<button class="btn btn-sm btn-danger" onclick="adminChangeOrderStatus('\${o.id}', 'REFUNDED')">💸 İptal / İadeyi Onayla</button>\`;
         }
       }
 
       return \`
         <div style="border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:16px;background:#fff;">
-          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--border);">
+          <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:8px;padding-bottom:10px;border-bottom:1px solid var(--border);">
             <div>
               <span style="font-size:16px;font-weight:900;">#\${escapeHtml(o.orderNumber)}</span>
               <span style="font-size:12.5px;color:var(--text-muted);margin-left:8px;">\${escapeHtml(o.createdAt)}</span>
@@ -5333,15 +6025,18 @@ function renderIndexHtml(initialProducts = []) {
               <span style="font-size:18px;font-weight:900;color:var(--primary);">\${o.totalAmountFormatted}</span>
             </div>
           </div>
+          \${stepperHtml}
           <table>
             <thead>
               <tr><th>Ürün (Snapshot)</th><th>Adet</th><th>Birim Fiyat</th><th>Toplam</th></tr>
             </thead>
             <tbody>\${itemsHtml}</tbody>
           </table>
+          \${ibanInfoBoxHtml}
+          \${cargoBoxHtml}
           \${o.status === 'REFUNDED' || o.status === 'REFUND_REQUESTED' ? \`
             <div style="margin-top:10px;background:#fef2f2;border:1px solid #fecaca;padding:10px 12px;border-radius:8px;font-size:13px;color:#991b1b;">
-              <strong>İade Bilgisi:</strong> Durum: \${escapeHtml(o.statusLabel)} | İade Tutarı: <strong>\${o.refund ? o.refund.amountFormatted : o.totalAmountFormatted}</strong> | Neden: \${escapeHtml(o.refundReason || '-')}
+              <strong>İade / İptal Bilgisi:</strong> Durum: \${escapeHtml(o.statusLabel)} | İade Tutarı: <strong>\${o.refund ? o.refund.amountFormatted : o.totalAmountFormatted}</strong> | Neden: \${escapeHtml(o.refundReason || '-')}
               \${o.refund ? \` | Stok Geri Yüklendi: \${o.refund.stockRestored ? 'Evet' : 'Hayır'}\` : ''}
             </div>
           \` : ''}
@@ -5350,6 +6045,56 @@ function renderIndexHtml(initialProducts = []) {
           </div>
         </div>
       \`;
+    }
+
+    function openCargoShipModal(orderId) {
+      document.getElementById('cargo-order-id').value = orderId;
+      document.getElementById('cargo-tracking-code').value = '';
+      document.getElementById('modal-cargo-ship').classList.add('open');
+    }
+
+    async function submitCargoShipForm(e) {
+      e.preventDefault();
+      const orderId = document.getElementById('cargo-order-id').value;
+      const cargoCompany = document.getElementById('cargo-company').value;
+      const trackingCode = document.getElementById('cargo-tracking-code').value.trim();
+      try {
+        await api(\`/api/admin/orders/\${orderId}/status\`, {
+          method: 'POST',
+          body: JSON.stringify({
+            status: 'SHIPPED',
+            cargoCompany,
+            trackingCode,
+            reason: \`Sipariş \${cargoCompany} (\${trackingCode}) ile kargoya verildi.\`
+          })
+        });
+        closeModal('modal-cargo-ship');
+        showToast(\`Sipariş 'Kargoya Verildi' olarak güncellendi (\${cargoCompany} - \${trackingCode})!\`, 'success');
+        await loadAdminAll();
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
+    async function syncCargoOrder(orderId, simulateDelivered = false) {
+      try {
+        const res = await api(\`/api/orders/\${orderId}/sync-cargo\`, {
+          method: 'POST',
+          body: JSON.stringify({ simulateDelivered })
+        });
+        if (res.autoDelivered) {
+          showToast('🎉 Kargo firmasından teslimat verisi çekildi ve sipariş otomatik olarak "Teslim Edildi" durumuna güncellendi!', 'success');
+        } else {
+          showToast('📡 Kargo durumu sorgulandı: ' + (res.order.cargoStatusSummary || 'Taşıma aşamasında'), 'info');
+        }
+        if (state.currentView === 'admin') {
+          await loadAdminAll();
+        } else {
+          await loadMyOrders();
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
     }
 
     async function triggerRefund(orderId, mode) {
@@ -5436,18 +6181,23 @@ function renderIndexHtml(initialProducts = []) {
         showToast('Yönetici paneline erişmek için Yönetici hesabı ile giriş yapmalısınız.', 'error');
         return;
       }
-      const [statsRes, prdRes, ordRes, emlRes, audRes] = await Promise.all([
+      const [statsRes, prdRes, ordRes, emlRes, audRes, cfgRes] = await Promise.all([
         api('/api/admin/stats'),
         api('/api/admin/products'),
         api('/api/admin/orders'),
         api('/api/emails'),
-        api('/api/admin/audit-logs')
+        api('/api/admin/audit-logs'),
+        api('/api/admin/settings')
       ]);
 
       state.adminProducts = prdRes.products;
       state.adminOrders = ordRes.orders;
       state.emails = emlRes.emails;
       state.auditLogs = audRes.logs;
+      if (cfgRes && cfgRes.settings) {
+        state.adminSettings = cfgRes.settings;
+        state.storeSettings = cfgRes.settings;
+      }
 
       const s = statsRes.stats;
       document.getElementById('admin-stats-grid').innerHTML = \`
@@ -5460,15 +6210,104 @@ function renderIndexHtml(initialProducts = []) {
 
       renderAdminProducts();
       renderAdminOrders();
+      renderAdminSettings();
       renderEmailsTable(document.getElementById('admin-sub-outbox'), state.emails);
       renderAdminAuditLogs();
     }
 
     function switchAdminSubTab(tab) {
-      ['products', 'orders', 'outbox', 'audit'].forEach(t => {
-        document.getElementById('admin-sub-' + t).style.display = t === tab ? 'block' : 'none';
-        document.getElementById('adm-tab-' + t).classList.toggle('active', t === tab);
+      ['products', 'orders', 'settings', 'outbox', 'audit'].forEach(t => {
+        const subEl = document.getElementById('admin-sub-' + t);
+        if (subEl) subEl.style.display = t === tab ? 'block' : 'none';
+        const tabEl = document.getElementById('adm-tab-' + t);
+        if (tabEl) tabEl.classList.toggle('active', t === tab);
       });
+    }
+
+    function renderAdminSettings() {
+      const wrap = document.getElementById('admin-sub-settings');
+      if (!wrap) return;
+      const cfg = state.adminSettings || state.storeSettings || {};
+      wrap.innerHTML = \`
+        <h3 style="font-size:18px;font-weight:900;margin-bottom:6px;color:var(--primary);">🏦 Firma IBAN, İletişim E-Postası ve Brevo Otomatik E-Posta Ayarları</h3>
+        <p style="font-size:13px;color:var(--text-muted);margin-bottom:16px;">
+          Buradan kaydettiğiniz IBAN ve Alıcı Ad Soyad bilgileri müşteriler sipariş geçtikten hemen sonra açılan ödeme ekranında, Siparişlerim sayfasında ve gönderilen otomatik e-postalarda yer alır.
+        </p>
+
+        <form onsubmit="submitAdminSettingsForm(event)">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>İletişim & Yönetici Bildirim E-Postası *</label>
+              <input type="email" id="cfg-contact-email" class="form-control" required value="\${escapeHtml(cfg.contactEmail || 'evlezzetlerimm@gmail.com')}" />
+            </div>
+            <div class="form-group">
+              <label>Banka Adı / Ödeme Yöntemi *</label>
+              <input type="text" id="cfg-bank-name" class="form-control" required value="\${escapeHtml(cfg.bankName || 'Ziraat Bankası / FAST (7/24)')}" placeholder="Örn: Ziraat Bankası / Garanti BBVA" />
+            </div>
+            <div class="form-group">
+              <label>IBAN Alıcı Ad Soyad (Firma / Hesap Sahibi) *</label>
+              <input type="text" id="cfg-iban-holder" class="form-control" required value="\${escapeHtml(cfg.ibanHolderName || 'Ev Lezzetlerimm - Erdem İbo')}" placeholder="Örn: Erdem İbo" />
+            </div>
+            <div class="form-group">
+              <label>Firma IBAN Numarası (TR...) *</label>
+              <input type="text" id="cfg-iban-number" class="form-control" required value="\${escapeHtml(cfg.ibanNumber || 'TR00 0000 0000 0000 0000 0000 00')}" placeholder="TR00 0000 0000 0000 0000 0000 00" />
+            </div>
+            <div class="form-group">
+              <label>Brevo Gönderici Adı</label>
+              <input type="text" id="cfg-brevo-sender-name" class="form-control" value="\${escapeHtml(cfg.brevoSenderName || 'Ev Lezzetlerimm')}" />
+            </div>
+            <div class="form-group">
+              <label>Brevo Gönderici E-Postası (Doğrulanmış Gönderici)</label>
+              <input type="email" id="cfg-brevo-sender-email" class="form-control" value="\${escapeHtml(cfg.brevoSenderEmail || 'evlezzetlerimm@gmail.com')}" />
+            </div>
+            <div class="form-group full">
+              <label>Brevo API Anahtarı (xkeysib-... ile başlayan anahtar — Günde 300 Gerçek E-Posta Ücretsiz)</label>
+              <input type="password" id="cfg-brevo-api-key" class="form-control" value="\${escapeHtml(cfg.brevoApiKey || '')}" placeholder="xkeysib-..." />
+            </div>
+          </div>
+
+          <div style="background:#f0fdf4;border:1px solid #bbf7d0;padding:12px 14px;border-radius:10px;margin:12px 0;font-size:13px;color:#166534;line-height:1.6;">
+            <strong>✉️ Brevo Otomatik E-Posta Entegrasyonu Durumu:</strong>
+            \${cfg.brevoConfigured
+              ? '<span class="status-badge status-DELIVERED">✅ Brevo API Aktif — Gerçek E-Posta Gönderiliyor</span>'
+              : '<span class="status-badge status-PREPARING">⚙️ Brevo API Anahtarı Bekleniyor (Şu an Site İçi E-Posta Kutusu Aktif)</span>'
+            }
+            <div style="margin-top:6px;">
+              1️⃣ <strong>brevo.com</strong> adresinden ücretsiz hesap açıp <code>evlezzetlerimm@gmail.com</code> adresinizi <em>Senders (Göndericiler)</em> kısmından doğrulayın.<br/>
+              2️⃣ Sağ üst menüden <strong>SMTP & API → API Keys</strong> sekmesine girip <code>xkeysib-...</code> ile başlayan API anahtarınızı oluşturun ve yukarıdaki kutuya yapıştırıp kaydedin. Anında müşterilerin gerçek Gmail/Hotmail kutusuna otomatik sipariş ve IBAN mesajı gitmeye başlar!
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;gap:10px;">
+            <button type="submit" class="btn btn-primary" style="padding:11px 22px;">💾 IBAN ve Brevo E-Posta Ayarlarını Kaydet</button>
+          </div>
+        </form>
+      \`;
+    }
+
+    async function submitAdminSettingsForm(e) {
+      e.preventDefault();
+      try {
+        const payload = {
+          contactEmail: document.getElementById('cfg-contact-email').value.trim(),
+          bankName: document.getElementById('cfg-bank-name').value.trim(),
+          ibanHolderName: document.getElementById('cfg-iban-holder').value.trim(),
+          ibanNumber: document.getElementById('cfg-iban-number').value.trim(),
+          brevoSenderName: document.getElementById('cfg-brevo-sender-name').value.trim(),
+          brevoSenderEmail: document.getElementById('cfg-brevo-sender-email').value.trim(),
+          brevoApiKey: document.getElementById('cfg-brevo-api-key').value.trim()
+        };
+        const res = await api('/api/admin/settings', {
+          method: 'PUT',
+          body: JSON.stringify(payload)
+        });
+        state.adminSettings = res.settings;
+        state.storeSettings = res.settings;
+        renderAdminSettings();
+        showToast('Firma IBAN, Alıcı Ad Soyad ve Brevo e-posta ayarları başarıyla kaydedildi!', 'success');
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
     }
 
     function renderAdminProducts() {
@@ -5827,7 +6666,18 @@ function createApp(db, options) {
           user: updatedUser
         }, 200);
       }
-      // 3. Vitrin Ürün & Türkiye İl-İlçe Uç Noktaları
+      // 3. Vitrin Ürün, Mağaza/IBAN Ayarları & Türkiye İl-İlçe Uç Noktaları
+      if (method === "GET" && path === "/api/store-settings") {
+        const s = getStoreSettings(db);
+        return jsonResponse({
+          settings: {
+            contactEmail: s.contactEmail,
+            ibanNumber: s.ibanNumber,
+            ibanHolderName: s.ibanHolderName,
+            bankName: s.bankName
+          }
+        }, 200);
+      }
       if (method === "GET" && path === "/api/locations") {
         return jsonResponse({
           locations: TURKEY_PROVINCES_DISTRICTS
@@ -5877,10 +6727,37 @@ function createApp(db, options) {
       }
       if (method === "GET" && path === "/api/orders/my") {
         const user = requireAuth(db, req);
-        const orders = listOrdersForUser(db, user.id);
+        let orders = listOrdersForUser(db, user.id);
+        const shippedOrders = orders.filter((o)=>o.status === "SHIPPED");
+        if (shippedOrders.length > 0) {
+          await Promise.all(shippedOrders.map((o)=>syncCargoDeliveryStatus(db, o.id).catch(()=>{})));
+          orders = listOrdersForUser(db, user.id);
+        }
         return jsonResponse({
           orders
         }, 200);
+      }
+      const orderPaymentConfirmMatch = path.match(/^\/api\/orders\/([^/]+)\/payment-confirm$/);
+      if (method === "POST" && orderPaymentConfirmMatch) {
+        const user = requireAuth(db, req);
+        const orderId = decodeURIComponent(orderPaymentConfirmMatch[1]);
+        const body = await parseJsonBody(req);
+        const senderName = typeof body.senderName === "string" ? body.senderName : undefined;
+        const order = confirmOrderPaymentByCustomer(db, user, orderId, senderName);
+        return jsonResponse({
+          order
+        }, 200);
+      }
+      const orderSyncCargoMatch = path.match(/^\/api\/orders\/([^/]+)\/sync-cargo$/);
+      if (method === "POST" && orderSyncCargoMatch) {
+        requireAuth(db, req);
+        const orderId = decodeURIComponent(orderSyncCargoMatch[1]);
+        const body = await parseJsonBody(req);
+        const simulateDelivered = Boolean(body.simulateDelivered);
+        const result = await syncCargoDeliveryStatus(db, orderId, {
+          simulateDelivered
+        });
+        return jsonResponse(result, 200);
       }
       const orderDetailMatch = path.match(/^\/api\/orders\/([^/]+)$/);
       if (method === "GET" && orderDetailMatch) {
@@ -5986,12 +6863,40 @@ function createApp(db, options) {
         if (method === "GET" && path === "/api/admin/orders") {
           const status = url.searchParams.get("status") ?? undefined;
           const search = url.searchParams.get("search") ?? undefined;
-          const orders = listAllOrdersForAdmin(db, {
+          let orders = listAllOrdersForAdmin(db, {
             status,
             search
           });
+          const shippedOrders = orders.filter((o)=>o.status === "SHIPPED");
+          if (shippedOrders.length > 0) {
+            await Promise.all(shippedOrders.map((o)=>syncCargoDeliveryStatus(db, o.id).catch(()=>{})));
+            orders = listAllOrdersForAdmin(db, {
+              status,
+              search
+            });
+          }
           return jsonResponse({
             orders
+          }, 200);
+        }
+        if (method === "GET" && path === "/api/admin/settings") {
+          const settings = getStoreSettings(db);
+          return jsonResponse({
+            settings
+          }, 200);
+        }
+        if (method === "PUT" && path === "/api/admin/settings") {
+          const body = await parseJsonBody(req);
+          const settings = saveStoreSettings(db, admin.id, admin.email, {
+            contactEmail: typeof body.contactEmail === "string" ? body.contactEmail : undefined,
+            ibanNumber: typeof body.ibanNumber === "string" ? body.ibanNumber : undefined,
+            ibanHolderName: typeof body.ibanHolderName === "string" ? body.ibanHolderName : undefined,
+            bankName: typeof body.bankName === "string" ? body.bankName : undefined,
+            brevoApiKey: typeof body.brevoApiKey === "string" ? body.brevoApiKey : undefined,
+            brevoSenderEmail: typeof body.brevoSenderEmail === "string" ? body.brevoSenderEmail : undefined
+          });
+          return jsonResponse({
+            settings
           }, 200);
         }
         const adminOrderStatusMatch = path.match(/^\/api\/admin\/orders\/([^/]+)\/status$/);
@@ -6000,7 +6905,12 @@ function createApp(db, options) {
           const body = await parseJsonBody(req);
           const targetStatus = validateOrderStatus(body.status);
           const reason = typeof body.reason === "string" ? body.reason : undefined;
-          const order = updateOrderStatusByAdmin(db, admin, orderId, targetStatus, reason);
+          const cargoCompany = typeof body.cargoCompany === "string" ? body.cargoCompany : undefined;
+          const trackingCode = typeof body.trackingCode === "string" ? body.trackingCode : undefined;
+          const order = updateOrderStatusByAdmin(db, admin, orderId, targetStatus, reason, {
+            cargoCompany,
+            trackingCode
+          });
           return jsonResponse({
             order
           }, 200);

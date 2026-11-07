@@ -23,9 +23,16 @@ import {
   requireAuth,
   updateUserProfile,
 } from "./services/authService.ts";
-import { EmailEventType, listOutboxEmails, processEmailOutbox } from "./services/emailService.ts";
+import {
+  EmailEventType,
+  getStoreSettings,
+  listOutboxEmails,
+  processEmailOutbox,
+  saveStoreSettings,
+} from "./services/emailService.ts";
 import {
   calculateServerCartQuote,
+  confirmOrderPaymentByCustomer,
   createOrderAtomic,
   getAdminDashboardStats,
   getOrderById,
@@ -33,6 +40,7 @@ import {
   listOrdersForUser,
   refundOrderAtomic,
   StockConflictError,
+  syncCargoDeliveryStatus,
   updateOrderStatusByAdmin,
 } from "./services/orderService.ts";
 import {
@@ -204,7 +212,22 @@ export function createApp(
         return jsonResponse({ user: updatedUser }, 200);
       }
 
-      // 3. Vitrin Ürün & Türkiye İl-İlçe Uç Noktaları
+      // 3. Vitrin Ürün, Mağaza/IBAN Ayarları & Türkiye İl-İlçe Uç Noktaları
+      if (method === "GET" && path === "/api/store-settings") {
+        const s = getStoreSettings(db);
+        return jsonResponse(
+          {
+            settings: {
+              contactEmail: s.contactEmail,
+              ibanNumber: s.ibanNumber,
+              ibanHolderName: s.ibanHolderName,
+              bankName: s.bankName,
+            },
+          },
+          200,
+        );
+      }
+
       if (method === "GET" && path === "/api/locations") {
         return jsonResponse({ locations: TURKEY_PROVINCES_DISTRICTS }, 200);
       }
@@ -243,8 +266,35 @@ export function createApp(
 
       if (method === "GET" && path === "/api/orders/my") {
         const user = requireAuth(db, req);
-        const orders = listOrdersForUser(db, user.id);
+        let orders = listOrdersForUser(db, user.id);
+        const shippedOrders = orders.filter((o) => o.status === "SHIPPED");
+        if (shippedOrders.length > 0) {
+          await Promise.all(
+            shippedOrders.map((o) => syncCargoDeliveryStatus(db, o.id).catch(() => {})),
+          );
+          orders = listOrdersForUser(db, user.id);
+        }
         return jsonResponse({ orders }, 200);
+      }
+
+      const orderPaymentConfirmMatch = path.match(/^\/api\/orders\/([^/]+)\/payment-confirm$/);
+      if (method === "POST" && orderPaymentConfirmMatch) {
+        const user = requireAuth(db, req);
+        const orderId = decodeURIComponent(orderPaymentConfirmMatch[1]);
+        const body = await parseJsonBody(req);
+        const senderName = typeof body.senderName === "string" ? body.senderName : undefined;
+        const order = confirmOrderPaymentByCustomer(db, user, orderId, senderName);
+        return jsonResponse({ order }, 200);
+      }
+
+      const orderSyncCargoMatch = path.match(/^\/api\/orders\/([^/]+)\/sync-cargo$/);
+      if (method === "POST" && orderSyncCargoMatch) {
+        requireAuth(db, req);
+        const orderId = decodeURIComponent(orderSyncCargoMatch[1]);
+        const body = await parseJsonBody(req);
+        const simulateDelivered = Boolean(body.simulateDelivered);
+        const result = await syncCargoDeliveryStatus(db, orderId, { simulateDelivered });
+        return jsonResponse(result, 200);
       }
 
       const orderDetailMatch = path.match(/^\/api\/orders\/([^/]+)$/);
@@ -334,8 +384,35 @@ export function createApp(
         if (method === "GET" && path === "/api/admin/orders") {
           const status = url.searchParams.get("status") ?? undefined;
           const search = url.searchParams.get("search") ?? undefined;
-          const orders = listAllOrdersForAdmin(db, { status, search });
+          let orders = listAllOrdersForAdmin(db, { status, search });
+          const shippedOrders = orders.filter((o) => o.status === "SHIPPED");
+          if (shippedOrders.length > 0) {
+            await Promise.all(
+              shippedOrders.map((o) => syncCargoDeliveryStatus(db, o.id).catch(() => {})),
+            );
+            orders = listAllOrdersForAdmin(db, { status, search });
+          }
           return jsonResponse({ orders }, 200);
+        }
+
+        if (method === "GET" && path === "/api/admin/settings") {
+          const settings = getStoreSettings(db);
+          return jsonResponse({ settings }, 200);
+        }
+
+        if (method === "PUT" && path === "/api/admin/settings") {
+          const body = await parseJsonBody(req);
+          const settings = saveStoreSettings(db, admin.id, admin.email, {
+            contactEmail: typeof body.contactEmail === "string" ? body.contactEmail : undefined,
+            ibanNumber: typeof body.ibanNumber === "string" ? body.ibanNumber : undefined,
+            ibanHolderName:
+              typeof body.ibanHolderName === "string" ? body.ibanHolderName : undefined,
+            bankName: typeof body.bankName === "string" ? body.bankName : undefined,
+            brevoApiKey: typeof body.brevoApiKey === "string" ? body.brevoApiKey : undefined,
+            brevoSenderEmail:
+              typeof body.brevoSenderEmail === "string" ? body.brevoSenderEmail : undefined,
+          });
+          return jsonResponse({ settings }, 200);
         }
 
         const adminOrderStatusMatch = path.match(/^\/api\/admin\/orders\/([^/]+)\/status$/);
@@ -344,7 +421,14 @@ export function createApp(
           const body = await parseJsonBody(req);
           const targetStatus = validateOrderStatus(body.status);
           const reason = typeof body.reason === "string" ? body.reason : undefined;
-          const order = updateOrderStatusByAdmin(db, admin, orderId, targetStatus, reason);
+          const cargoCompany =
+            typeof body.cargoCompany === "string" ? body.cargoCompany : undefined;
+          const trackingCode =
+            typeof body.trackingCode === "string" ? body.trackingCode : undefined;
+          const order = updateOrderStatusByAdmin(db, admin, orderId, targetStatus, reason, {
+            cargoCompany,
+            trackingCode,
+          });
           return jsonResponse({ order }, 200);
         }
 

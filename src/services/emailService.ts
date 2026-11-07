@@ -4,6 +4,86 @@ import { generateId, getEnv } from "./cryptoUtils.ts";
 
 export type EmailEventType = "ORDER_PURCHASED" | "ORDER_REFUND_REQUESTED" | "ORDER_REFUNDED";
 
+export interface StoreSettings {
+  contactEmail: string;
+  ibanNumber: string;
+  ibanHolderName: string;
+  bankName: string;
+  brevoApiKey: string;
+  brevoSenderEmail: string;
+  brevoSenderName: string;
+}
+
+const STORE_SETTINGS_ROW_ID = "cfg_store_settings_v1";
+
+export function getStoreSettings(db: DatabaseSync): StoreSettings {
+  const defaults: StoreSettings = {
+    contactEmail: getEnv("ADMIN_EMAIL") ?? "evlezzetlerimm@gmail.com",
+    ibanNumber: getEnv("COMPANY_IBAN") ?? "TR12 0001 0012 3456 7890 1234 01",
+    ibanHolderName: getEnv("COMPANY_IBAN_HOLDER") ?? "Ev Lezzetlerimm — Mutfak Yönetimi",
+    bankName: getEnv("COMPANY_BANK_NAME") ?? "Ziraat Bankası (Tüm Bankalardan 7/24 FAST / EFT)",
+    brevoApiKey: getEnv("BREVO_API_KEY") ?? "",
+    brevoSenderEmail: getEnv("BREVO_SENDER_EMAIL") ?? "evlezzetlerimm@gmail.com",
+    brevoSenderName: "Ev Lezzetlerimm",
+  };
+
+  try {
+    const row = db
+      .prepare("SELECT new_data_json FROM audit_logs WHERE id = ?")
+      .get(STORE_SETTINGS_ROW_ID) as { new_data_json: string | null } | undefined;
+    if (row && row.new_data_json) {
+      const parsed = JSON.parse(row.new_data_json) as Partial<StoreSettings>;
+      return {
+        contactEmail: parsed.contactEmail || defaults.contactEmail,
+        ibanNumber: parsed.ibanNumber || defaults.ibanNumber,
+        ibanHolderName: parsed.ibanHolderName || defaults.ibanHolderName,
+        bankName: parsed.bankName || defaults.bankName,
+        brevoApiKey: parsed.brevoApiKey !== undefined ? parsed.brevoApiKey : defaults.brevoApiKey,
+        brevoSenderEmail: parsed.brevoSenderEmail || defaults.brevoSenderEmail,
+        brevoSenderName: parsed.brevoSenderName || defaults.brevoSenderName,
+      };
+    }
+  } catch {
+    // Varsayılan ayarlarla devam et
+  }
+  return defaults;
+}
+
+export function saveStoreSettings(
+  db: DatabaseSync,
+  actorId: string,
+  actorEmail: string,
+  input: Partial<StoreSettings>,
+): StoreSettings {
+  const current = getStoreSettings(db);
+  const updated: StoreSettings = {
+    contactEmail: (input.contactEmail ?? current.contactEmail).trim() || "evlezzetlerimm@gmail.com",
+    ibanNumber: (input.ibanNumber ?? current.ibanNumber).trim(),
+    ibanHolderName: (input.ibanHolderName ?? current.ibanHolderName).trim(),
+    bankName: (input.bankName ?? current.bankName).trim(),
+    brevoApiKey: (input.brevoApiKey ?? current.brevoApiKey).trim(),
+    brevoSenderEmail:
+      (input.brevoSenderEmail ?? current.brevoSenderEmail).trim() || "evlezzetlerimm@gmail.com",
+    brevoSenderName: (input.brevoSenderName ?? current.brevoSenderName).trim() || "Ev Lezzetlerimm",
+  };
+
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT OR REPLACE INTO audit_logs (
+      id, actor_user_id, actor_email, actor_role, action, entity_type, entity_id, old_data_json, new_data_json, created_at
+    ) VALUES (?, ?, ?, 'ADMIN', 'STORE_SETTINGS_UPDATED', 'STORE_SETTINGS', 'GLOBAL', ?, ?, ?)
+  `).run(
+    STORE_SETTINGS_ROW_ID,
+    actorId,
+    actorEmail,
+    JSON.stringify({ ...current, brevoApiKey: current.brevoApiKey ? "***" : "" }),
+    JSON.stringify(updated),
+    now,
+  );
+
+  return updated;
+}
+
 export interface OrderItemSnapshotForEmail {
   productId: string | null;
   productNameSnapshot: string;
@@ -52,8 +132,6 @@ export interface EmailOutboxRecord {
   createdAt: string;
 }
 
-const ADMIN_NOTIFICATION_EMAIL = getEnv("ADMIN_EMAIL") ?? "admin@evlezzetlerimm.com";
-
 function escapeHtml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
@@ -101,13 +179,30 @@ function buildItemsHtmlTable(items: OrderItemSnapshotForEmail[]): string {
   `;
 }
 
-function buildPurchaseHtml(order: OrderForEmail, isForAdmin: boolean): string {
+function buildPurchaseHtml(
+  order: OrderForEmail,
+  isForAdmin: boolean,
+  settings: StoreSettings,
+): string {
   const headline = isForAdmin
-    ? `Yeni Sipariş Geldi! (#${escapeHtml(order.orderNumber)})`
-    : `Siparişiniz Alındı! Afiyet Olsun (#${escapeHtml(order.orderNumber)})`;
+    ? `Yeni Sipariş Alındı! (#${escapeHtml(order.orderNumber)})`
+    : `Siparişiniz Alındı! (#${escapeHtml(order.orderNumber)})`;
   const subtext = isForAdmin
-    ? `${escapeHtml(order.customerNameSnapshot)} (${escapeHtml(order.customerEmailSnapshot)}) tarafından yeni bir sipariş oluşturuldu.`
-    : `Sayın ${escapeHtml(order.customerNameSnapshot)}, ev yemekleri siparişiniz mutfağımıza başarıyla iletilmiştir.`;
+    ? `${escapeHtml(order.customerNameSnapshot)} (${escapeHtml(order.customerEmailSnapshot)}) tarafından yeni bir sipariş oluşturuldu. Müşterinin IBAN havale/EFT ödemesini kontrol ederek siparişi 'Sipariş Hazırlanıyor' aşamasına geçirebilirsiniz.`
+    : `Sayın ${escapeHtml(order.customerNameSnapshot)}, siparişiniz sistemimize <strong>Sipariş Alındı</strong> olarak kaydedilmiştir. Ödemeniz aşağıdaki IBAN hesabımıza ulaştıktan sonra siparişiniz hazırlanmaya başlanacaktır.`;
+
+  const ibanBoxHtml = `
+    <div style="background:#fef3c7;border:2px solid #f59e0b;border-radius:10px;padding:16px;margin:16px 0;font-size:14px;color:#78350f;">
+      <div style="font-weight:900;font-size:15px;margin-bottom:8px;color:#92400e;">🏦 Havale / EFT / FAST Ödeme Bilgileri</div>
+      <div style="margin-bottom:4px;"><strong>Banka:</strong> ${escapeHtml(settings.bankName)}</div>
+      <div style="margin-bottom:4px;"><strong>Alıcı Ad Soyad / Ünvan:</strong> ${escapeHtml(settings.ibanHolderName)}</div>
+      <div style="margin-bottom:6px;"><strong>IBAN:</strong> <code style="background:#fff;padding:3px 8px;border-radius:6px;font-weight:900;color:#1c1917;font-size:14px;">${escapeHtml(settings.ibanNumber)}</code></div>
+      <div style="margin-bottom:8px;"><strong>Açıklama Kodu:</strong> <strong>#${escapeHtml(order.orderNumber)}</strong></div>
+      <div style="background:#fee2e2;border:1px solid #f87171;color:#991b1b;padding:10px 12px;border-radius:8px;font-weight:700;font-size:13px;">
+        ⚠️ ÖNEMLİ UYARI: Ödemeyi yaptıktan sonra sitemizdeki "Siparişlerim" ekranından "Ödemeyi Yaptım" butonuna basınız. 1 gün (24 saat) içinde IBAN hesabına ödemesi yapılmayan siparişler otomatik olarak iptal edilecektir.
+      </div>
+    </div>
+  `;
 
   return `<!DOCTYPE html>
 <html lang="tr">
@@ -120,8 +215,10 @@ function buildPurchaseHtml(order: OrderForEmail, isForAdmin: boolean): string {
     </div>
     <div style="padding:24px;">
       <p style="margin:0 0 16px;font-size:15px;line-height:1.6;">${subtext}</p>
+      ${ibanBoxHtml}
       <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:14px;margin-bottom:16px;font-size:14px;">
         <div><strong>Sipariş Numarası:</strong> ${escapeHtml(order.orderNumber)}</div>
+        <div><strong>Sipariş Durumu:</strong> Sipariş Alındı</div>
         <div><strong>Sipariş Zamanı:</strong> ${escapeHtml(order.createdAt)}</div>
         <div><strong>Teslimat Adresi:</strong> ${escapeHtml(order.deliveryAddress)}</div>
         ${order.customerNote ? `<div><strong>Müşteri Notu:</strong> ${escapeHtml(order.customerNote)}</div>` : ""}
@@ -132,7 +229,7 @@ function buildPurchaseHtml(order: OrderForEmail, isForAdmin: boolean): string {
       </div>
     </div>
     <div style="background:#f9fafb;padding:14px 24px;font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb;">
-      Bu e-posta Ev Lezzetlerimm Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
+      İletişim: <a href="mailto:${escapeHtml(settings.contactEmail)}" style="color:#9a3412;">${escapeHtml(settings.contactEmail)}</a> • Bu e-posta Ev Lezzetlerimm otomatik bildirim sistemi tarafından gönderilmiştir.
     </div>
   </div>
 </body>
@@ -144,16 +241,17 @@ function buildRefundHtml(
   refund: RefundForEmail,
   isForAdmin: boolean,
   eventType: EmailEventType,
+  settings: StoreSettings,
 ): string {
   const isCompleted = eventType === "ORDER_REFUNDED";
   const badgeColor = isCompleted ? "#15803d" : "#b45309";
   const headline = isCompleted
-    ? `Sipariş İadesi Onaylandı ve Tamamlandı (#${escapeHtml(order.orderNumber)})`
+    ? `Sipariş İadesi / İptali Tamamlandı (#${escapeHtml(order.orderNumber)})`
     : `İade Talebi Oluşturuldu (#${escapeHtml(order.orderNumber)})`;
 
   const intro = isForAdmin
-    ? `${escapeHtml(order.customerNameSnapshot)} (${escapeHtml(order.customerEmailSnapshot)}) adlı müşterinin <strong>#${escapeHtml(order.orderNumber)}</strong> numaralı siparişi için iade işlemi gerçekleşti.`
-    : `Sayın ${escapeHtml(order.customerNameSnapshot)}, <strong>#${escapeHtml(order.orderNumber)}</strong> numaralı siparişinize ait iade işleminiz aşağıda detaylandırılmıştır.`;
+    ? `${escapeHtml(order.customerNameSnapshot)} (${escapeHtml(order.customerEmailSnapshot)}) adlı müşterinin <strong>#${escapeHtml(order.orderNumber)}</strong> numaralı siparişi için iade/iptal işlemi gerçekleşti.`
+    : `Sayın ${escapeHtml(order.customerNameSnapshot)}, <strong>#${escapeHtml(order.orderNumber)}</strong> numaralı siparişinize ait iade/iptal işleminiz aşağıda detaylandırılmıştır.`;
 
   return `<!DOCTYPE html>
 <html lang="tr">
@@ -181,7 +279,7 @@ function buildRefundHtml(
       </div>
     </div>
     <div style="background:#f9fafb;padding:14px 24px;font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb;">
-      Bu e-posta Ev Lezzetlerimm Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
+      İletişim: <a href="mailto:${escapeHtml(settings.contactEmail)}" style="color:#15803d;">${escapeHtml(settings.contactEmail)}</a> • Bu e-posta Ev Lezzetlerimm Transactional Outbox sistemi tarafından otomatik olarak oluşturulmuştur.
     </div>
   </div>
 </body>
@@ -196,63 +294,74 @@ export function enqueuePurchaseEmailsInTx(
   db: DatabaseSync,
   order: OrderForEmail,
 ): string[] {
+  const settings = getStoreSettings(db);
   const now = new Date().toISOString();
   const insertStmt = db.prepare(`
     INSERT INTO email_outbox (
       id, event_type, order_id, recipient_email, recipient_role,
       subject, html_body, text_body, payload_json, status, attempts, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?)
+    ) VALUES (?, 'ORDER_PURCHASED', ?, ?, ?, ?, ?, ?, ?, 'PENDING', 0, ?)
   `);
 
-  const payload = {
-    eventType: "ORDER_PURCHASED",
-    orderId: order.id,
-    orderNumber: order.orderNumber,
-    customerName: order.customerNameSnapshot,
-    customerEmail: order.customerEmailSnapshot,
-    deliveryAddress: order.deliveryAddress,
-    totalAmountKurus: order.totalAmountKurus,
-    totalAmountFormatted: formatKurus(order.totalAmountKurus),
-    items: order.items,
-    timestamp: order.createdAt,
-  };
-
-  const itemsText = order.items
+  const itemsSummaryText = order.items
     .map(
       (i) =>
         `- ${i.productNameSnapshot} (${i.portionInfoSnapshot}) x${i.quantity} = ${formatKurus(i.lineTotalKurusSnapshot)}`,
     )
     .join("\n");
 
-  // 1. Müşteri Onay E-postası
+  const payload = {
+    event: "ORDER_PURCHASED",
+    orderId: order.id,
+    orderNumber: order.orderNumber,
+    customerEmail: order.customerEmailSnapshot,
+    totalAmountKurus: order.totalAmountKurus,
+    totalFormatted: formatKurus(order.totalAmountKurus),
+    ibanNumber: settings.ibanNumber,
+    ibanHolderName: settings.ibanHolderName,
+    items: order.items,
+  };
+
+  // 1. Müşteri Onay E-Postası
   const custEmailId = generateId("eml");
-  const custSubject = `Siparişiniz Alındı (#${order.orderNumber}) - ${formatKurus(order.totalAmountKurus)}`;
-  const custText = `Sayın ${order.customerNameSnapshot},\n#${order.orderNumber} numaralı siparişiniz alınmıştır.\n\nKalemler:\n${itemsText}\n\nToplam Tutar: ${formatKurus(order.totalAmountKurus)}\nTeslimat Adresi: ${order.deliveryAddress}`;
+  const custSubject = `🍲 Siparişiniz Alındı (#${order.orderNumber}) — Toplam: ${formatKurus(order.totalAmountKurus)}`;
+  const custText =
+    `Sayın ${order.customerNameSnapshot},\n\n` +
+    `#${order.orderNumber} numaralı siparişiniz 'Sipariş Alındı' olarak kaydedilmiştir.\n` +
+    `IBAN: ${settings.ibanNumber} (${settings.ibanHolderName})\n` +
+    `UYARI: 1 gün (24 saat) içinde IBAN hesabına ödeme yapılmayan siparişler iptal edilir.\n\n` +
+    `Sipariş Kalemleri:\n${itemsSummaryText}\n\n` +
+    `Genel Toplam: ${formatKurus(order.totalAmountKurus)}\nTeslimat Adresi: ${order.deliveryAddress}`;
+
   insertStmt.run(
     custEmailId,
-    "ORDER_PURCHASED",
     order.id,
     order.customerEmailSnapshot,
     "CUSTOMER",
     custSubject,
-    buildPurchaseHtml(order, false),
+    buildPurchaseHtml(order, false, settings),
     custText,
     JSON.stringify(payload),
     now,
   );
 
-  // 2. Yönetici Bildirim E-postası
+  // 2. Yönetici Bildirim E-Postası
   const adminEmailId = generateId("eml");
-  const adminSubject = `[YENİ SİPARİŞ] #${order.orderNumber} - ${order.customerNameSnapshot} (${formatKurus(order.totalAmountKurus)})`;
-  const adminText = `Yeni Sipariş (#${order.orderNumber})\nMüşteri: ${order.customerNameSnapshot} (${order.customerEmailSnapshot})\nToplam: ${formatKurus(order.totalAmountKurus)}\n\nKalemler:\n${itemsText}`;
+  const adminSubject = `🔔 [YÖNETİCİ] Yeni Sipariş Alındı (#${order.orderNumber}) — ${order.customerNameSnapshot} (${formatKurus(order.totalAmountKurus)})`;
+  const adminText =
+    `Yeni Sipariş Bildirimi (#${order.orderNumber})\n` +
+    `Müşteri: ${order.customerNameSnapshot} (${order.customerEmailSnapshot})\n` +
+    `Teslimat Adresi: ${order.deliveryAddress}\n\n` +
+    `Kalemler:\n${itemsSummaryText}\n\n` +
+    `Genel Toplam: ${formatKurus(order.totalAmountKurus)}`;
+
   insertStmt.run(
     adminEmailId,
-    "ORDER_PURCHASED",
     order.id,
-    ADMIN_NOTIFICATION_EMAIL,
+    settings.contactEmail,
     "ADMIN",
     adminSubject,
-    buildPurchaseHtml(order, true),
+    buildPurchaseHtml(order, true, settings),
     adminText,
     JSON.stringify(payload),
     now,
@@ -262,15 +371,16 @@ export function enqueuePurchaseEmailsInTx(
 }
 
 /**
- * İade veya iade talebi gerçekleştiğinde AYNI VERİTABANI TRANSACTION'I içinde
- * hem Müşteri hem Yönetici için e-postaları email_outbox tablosuna yazar.
+ * İade talebi veya iade onayı gerçekleştiğinde AYNI VERİTABANI TRANSACTION'I içinde
+ * hem Müşteri hem Yönetici için iade e-postalarını email_outbox tablosuna yazar.
  */
 export function enqueueRefundEmailsInTx(
   db: DatabaseSync,
   order: OrderForEmail,
   refund: RefundForEmail,
-  eventType: EmailEventType = "ORDER_REFUNDED",
+  eventType: "ORDER_REFUND_REQUESTED" | "ORDER_REFUNDED",
 ): string[] {
+  const settings = getStoreSettings(db);
   const now = new Date().toISOString();
   const insertStmt = db.prepare(`
     INSERT INTO email_outbox (
@@ -280,33 +390,31 @@ export function enqueueRefundEmailsInTx(
   `);
 
   const payload = {
-    eventType,
+    event: eventType,
     orderId: order.id,
     orderNumber: order.orderNumber,
     refundId: refund.refundId,
-    customerName: order.customerNameSnapshot,
-    customerEmail: order.customerEmailSnapshot,
     refundAmountKurus: refund.refundAmountKurus,
-    refundAmountFormatted: formatKurus(refund.refundAmountKurus),
+    refundFormatted: formatKurus(refund.refundAmountKurus),
     reason: refund.reason,
     stockRestored: refund.stockRestored,
-    items: order.items,
-    timestamp: refund.refundedAt,
+    refundedAt: refund.refundedAt,
   };
 
-  const itemsText = order.items
-    .map(
-      (i) =>
-        `- ${i.productNameSnapshot} x${i.quantity} = ${formatKurus(i.lineTotalKurusSnapshot)}`,
-    )
-    .join("\n");
+  const isCompleted = eventType === "ORDER_REFUNDED";
 
-  const statusTitle = eventType === "ORDER_REFUNDED" ? "İade Onayı" : "İade Talebi Alındı";
-
-  // 1. Müşteri İade E-postası
+  // 1. Müşteri İade E-Postası
   const custEmailId = generateId("eml");
-  const custSubject = `${statusTitle} (#${order.orderNumber}) - İade Tutarı: ${formatKurus(refund.refundAmountKurus)}`;
-  const custText = `Sayın ${order.customerNameSnapshot},\n#${order.orderNumber} numaralı siparişiniz için ${statusTitle} işlemi gerçekleştirilmiştir.\nİade Tutarı: ${formatKurus(refund.refundAmountKurus)}\nNeden: ${refund.reason}\nZaman: ${refund.refundedAt}\n\nKalemler:\n${itemsText}`;
+  const custSubject = isCompleted
+    ? `💸 İadeniz Onaylandı (#${order.orderNumber}) — İade Tutarı: ${formatKurus(refund.refundAmountKurus)}`
+    : `⏳ İade Talebiniz Alındı (#${order.orderNumber}) — ${formatKurus(refund.refundAmountKurus)}`;
+  const custText =
+    `Sayın ${order.customerNameSnapshot},\n\n` +
+    `#${order.orderNumber} numaralı siparişiniz için ${isCompleted ? "iade işleminiz tamamlanmıştır" : "iade talebiniz oluşturulmuştur"}.\n` +
+    `İade Tutarı: ${formatKurus(refund.refundAmountKurus)}\n` +
+    `İade Nedeni: ${refund.reason}\n` +
+    `Referans No: ${refund.refundId}`;
+
   insertStmt.run(
     custEmailId,
     eventType,
@@ -314,24 +422,32 @@ export function enqueueRefundEmailsInTx(
     order.customerEmailSnapshot,
     "CUSTOMER",
     custSubject,
-    buildRefundHtml(order, refund, false, eventType),
+    buildRefundHtml(order, refund, false, eventType, settings),
     custText,
     JSON.stringify(payload),
     now,
   );
 
-  // 2. Yönetici İade E-postası
+  // 2. Yönetici İade Bildirim E-Postası
   const adminEmailId = generateId("eml");
-  const adminSubject = `[İADE BİLDİRİMİ] #${order.orderNumber} - ${formatKurus(refund.refundAmountKurus)} (${order.customerNameSnapshot})`;
-  const adminText = `Sipariş İade Bildirimi (#${order.orderNumber})\nMüşteri: ${order.customerNameSnapshot} (${order.customerEmailSnapshot})\nİade Tutarı: ${formatKurus(refund.refundAmountKurus)}\nNeden: ${refund.reason}\nZaman: ${refund.refundedAt}`;
+  const adminSubject = isCompleted
+    ? `🔄 [YÖNETİCİ] Sipariş İade Edildi (#${order.orderNumber}) — ${formatKurus(refund.refundAmountKurus)}`
+    : `⚠️ [YÖNETİCİ] Yeni İade Talebi (#${order.orderNumber}) — ${order.customerNameSnapshot}`;
+  const adminText =
+    `Sipariş İade Bildirimi (#${order.orderNumber})\n` +
+    `Müşteri: ${order.customerNameSnapshot} (${order.customerEmailSnapshot})\n` +
+    `İade Tutarı: ${formatKurus(refund.refundAmountKurus)}\n` +
+    `İade Nedeni: ${refund.reason}\n` +
+    `Stok Geri Yüklendi: ${refund.stockRestored ? "Evet" : "Hayır"}`;
+
   insertStmt.run(
     adminEmailId,
     eventType,
     order.id,
-    ADMIN_NOTIFICATION_EMAIL,
+    settings.contactEmail,
     "ADMIN",
     adminSubject,
-    buildRefundHtml(order, refund, true, eventType),
+    buildRefundHtml(order, refund, true, eventType, settings),
     adminText,
     JSON.stringify(payload),
     now,
@@ -340,16 +456,63 @@ export function enqueueRefundEmailsInTx(
   return [custEmailId, adminEmailId];
 }
 
+async function sendViaBrevoRestApi(
+  settings: StoreSettings,
+  recipientEmail: string,
+  subject: string,
+  htmlContent: string,
+  textContent: string,
+): Promise<void> {
+  if (!settings.brevoApiKey) return;
+  try {
+    await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "accept": "application/json",
+        "api-key": settings.brevoApiKey,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        sender: {
+          name: settings.brevoSenderName || "Ev Lezzetlerimm",
+          email: settings.brevoSenderEmail || "evlezzetlerimm@gmail.com",
+        },
+        replyTo: {
+          name: "Ev Lezzetlerimm",
+          email: settings.contactEmail || "evlezzetlerimm@gmail.com",
+        },
+        to: [{ email: recipientEmail }],
+        subject,
+        htmlContent,
+        textContent,
+      }),
+    });
+  } catch {
+    // Brevo ağ hatası durumunda yerel Outbox kaydı korunur
+  }
+}
+
 /**
- * Outbox kuyruğundaki PENDING e-postaları işler, RFC-2822 Message-ID üretir ve SENT olarak işaretler.
+ * Outbox kuyruğundaki PENDING e-postaları işler, RFC-2822 Message-ID üretir, SENT olarak işaretler
+ * ve eğer Brevo API anahtarı tanımlıysa gerçek e-posta gönderimini tetikler.
  */
 export function processEmailOutbox(db: DatabaseSync): number {
   const pendingRows = db
-    .prepare("SELECT id, order_id, recipient_email FROM email_outbox WHERE status = 'PENDING' ORDER BY created_at ASC")
-    .all() as Array<{ id: string; order_id: string; recipient_email: string }>;
+    .prepare(
+      "SELECT id, order_id, recipient_email, subject, html_body, text_body FROM email_outbox WHERE status = 'PENDING' ORDER BY created_at ASC",
+    )
+    .all() as Array<{
+      id: string;
+      order_id: string;
+      recipient_email: string;
+      subject: string;
+      html_body: string;
+      text_body: string;
+    }>;
 
   if (pendingRows.length === 0) return 0;
 
+  const settings = getStoreSettings(db);
   const updateStmt = db.prepare(`
     UPDATE email_outbox
     SET status = 'SENT', attempts = attempts + 1, message_id = ?, sent_at = ?
@@ -360,6 +523,15 @@ export function processEmailOutbox(db: DatabaseSync): number {
   for (const row of pendingRows) {
     const messageId = `<${row.id}.${Date.now()}@evlezzetlerimm.com>`;
     updateStmt.run(messageId, now, row.id);
+    if (settings.brevoApiKey) {
+      sendViaBrevoRestApi(
+        settings,
+        row.recipient_email,
+        row.subject,
+        row.html_body,
+        row.text_body,
+      ).catch(() => {});
+    }
   }
 
   return pendingRows.length;
@@ -403,7 +575,12 @@ function mapOutboxRow(r: RawEmailOutboxRow): EmailOutboxRecord {
 
 export function listOutboxEmails(
   db: DatabaseSync,
-  options?: { recipientEmail?: string; orderId?: string; eventType?: EmailEventType; limit?: number },
+  options?: {
+    recipientEmail?: string;
+    orderId?: string;
+    eventType?: EmailEventType;
+    limit?: number;
+  },
 ): EmailOutboxRecord[] {
   const conditions: string[] = [];
   const params: (string | number)[] = [];

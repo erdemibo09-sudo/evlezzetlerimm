@@ -100,7 +100,7 @@ export function initSchema(db: DatabaseSync): void {
       delivery_address TEXT NOT NULL,
       customer_note TEXT NOT NULL DEFAULT '',
       total_amount_kurus INTEGER NOT NULL CHECK (total_amount_kurus >= 0),
-      status TEXT NOT NULL CHECK (status IN ('PAID', 'PREPARING', 'DELIVERED', 'REFUND_REQUESTED', 'REFUNDED')),
+      status TEXT NOT NULL CHECK (status IN ('PAID', 'PREPARING', 'SHIPPED', 'DELIVERED', 'REFUND_REQUESTED', 'REFUNDED')),
       idempotency_key TEXT UNIQUE,
       refund_reason TEXT,
       refunded_amount_kurus INTEGER DEFAULT 0 CHECK (refunded_amount_kurus >= 0),
