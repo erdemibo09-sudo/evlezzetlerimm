@@ -227,6 +227,46 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
     .role-ADMIN { background: #dc2626; color: #fff; }
     .role-CUSTOMER { background: #16a34a; color: #fff; }
 
+    .ig-header-btn {
+      background: linear-gradient(45deg, #f09433 0%, #e6683c 25%, #dc2743 50%, #cc2366 75%, #bc1888 100%);
+      color: #fff;
+      text-decoration: none;
+      padding: 7px 13px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 2px 10px rgba(220, 39, 67, 0.35);
+      transition: transform 0.15s, opacity 0.15s;
+      white-space: nowrap;
+    }
+    .ig-header-btn:hover {
+      transform: translateY(-1px);
+      opacity: 0.94;
+      color: #fff;
+    }
+    .ig-hero-badge {
+      background: linear-gradient(45deg, rgba(240,148,51,0.28), rgba(220,39,67,0.38), rgba(188,24,136,0.38));
+      border: 1px solid rgba(255,255,255,0.4);
+      padding: 6px 13px;
+      border-radius: 999px;
+      font-size: 12.5px;
+      font-weight: 700;
+      color: #fff;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+    .ig-hero-badge:hover {
+      background: linear-gradient(45deg, #f09433, #dc2743, #bc1888);
+    }
+
     /* Hero */
     .hero {
       background: linear-gradient(135deg, #431407 0%, #7c2d12 55%, #9a3412 100%);
@@ -645,6 +685,13 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
       .header-actions {
         gap: 6px;
       }
+      .ig-header-btn {
+        padding: 6px 9px;
+        font-size: 12px;
+      }
+      .ig-header-btn .ig-label {
+        display: none;
+      }
       .cart-trigger {
         padding: 7px 12px;
         font-size: 12.5px;
@@ -865,6 +912,10 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
       </nav>
 
       <div class="header-actions">
+        <a href="https://www.instagram.com/evlezzetlerimm" target="_blank" rel="noopener noreferrer" class="ig-header-btn" aria-label="Instagram @evlezzetlerimm">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+          <span class="ig-label">@evlezzetlerimm</span>
+        </a>
         <div id="auth-area">
           <div style="display:flex;gap:6px;">
             <button class="btn btn-sm btn-outline" style="color:#fff;border-color:rgba(255,255,255,0.35);" onclick="openAuthModal('login')">🔑 Giriş Yap</button>
@@ -884,6 +935,10 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
         <h1>Katkısız, Doğal Ev Yapımı Lezzetler & Kurutmalıklar</h1>
         <p>Dalında kurutulmuş Aydın dağ inciri, doğal fermente sele siyah zeytin, güneşte kurutulmuş cennet hurması, çıtır incir reçeli ve el yapımı kızarmış içli köfte doğrudan mutfağımızdan sofranıza.</p>
         <div class="hero-badges">
+          <a href="https://www.instagram.com/evlezzetlerimm" target="_blank" rel="noopener noreferrer" class="ig-hero-badge">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line></svg>
+            Instagram: @evlezzetlerimm
+          </a>
           <span class="hero-badge">✅ %100 Doğal & Katkısız Ev Yapımı</span>
           <span class="hero-badge">🔒 Atomik Günlük Stok Garantisi</span>
           <span class="hero-badge">✉️ Anında Sipariş & İade E-Posta Bildirimi</span>
