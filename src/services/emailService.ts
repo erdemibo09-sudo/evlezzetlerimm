@@ -492,6 +492,14 @@ async function sendViaBrevoRestApi(
   }
 }
 
+const inFlightEmailDeliveries: Promise<void>[] = [];
+
+export async function flushInFlightEmailDeliveries(): Promise<void> {
+  if (inFlightEmailDeliveries.length === 0) return;
+  const batch = inFlightEmailDeliveries.splice(0, inFlightEmailDeliveries.length);
+  await Promise.allSettled(batch);
+}
+
 /**
  * Outbox kuyruğundaki PENDING e-postaları işler, RFC-2822 Message-ID üretir, SENT olarak işaretler
  * ve eğer Brevo API anahtarı tanımlıysa gerçek e-posta gönderimini tetikler.
@@ -524,13 +532,15 @@ export function processEmailOutbox(db: DatabaseSync): number {
     const messageId = `<${row.id}.${Date.now()}@evlezzetlerimm.com>`;
     updateStmt.run(messageId, now, row.id);
     if (settings.brevoApiKey) {
-      sendViaBrevoRestApi(
-        settings,
-        row.recipient_email,
-        row.subject,
-        row.html_body,
-        row.text_body,
-      ).catch(() => {});
+      inFlightEmailDeliveries.push(
+        sendViaBrevoRestApi(
+          settings,
+          row.recipient_email,
+          row.subject,
+          row.html_body,
+          row.text_body,
+        ).catch(() => {}),
+      );
     }
   }
 

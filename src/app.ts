@@ -25,6 +25,7 @@ import {
 } from "./services/authService.ts";
 import {
   EmailEventType,
+  flushInFlightEmailDeliveries,
   getStoreSettings,
   listOutboxEmails,
   processEmailOutbox,
@@ -477,6 +478,7 @@ export function createApp(
 
   async function handleRequest(req: Request): Promise<Response> {
     const res = await handleCoreRequest(req);
+    await flushInFlightEmailDeliveries();
     const method = req.method.toUpperCase();
     const url = new URL(req.url);
     if (

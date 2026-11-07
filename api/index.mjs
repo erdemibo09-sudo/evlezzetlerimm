@@ -2727,6 +2727,12 @@ async function sendViaBrevoRestApi(settings, recipientEmail, subject, htmlConten
   // Brevo ağ hatası durumunda yerel Outbox kaydı korunur
   }
 }
+const inFlightEmailDeliveries = [];
+async function flushInFlightEmailDeliveries() {
+  if (inFlightEmailDeliveries.length === 0) return;
+  const batch = inFlightEmailDeliveries.splice(0, inFlightEmailDeliveries.length);
+  await Promise.allSettled(batch);
+}
 /**
  * Outbox kuyruğundaki PENDING e-postaları işler, RFC-2822 Message-ID üretir, SENT olarak işaretler
  * ve eğer Brevo API anahtarı tanımlıysa gerçek e-posta gönderimini tetikler.
@@ -2744,7 +2750,7 @@ async function sendViaBrevoRestApi(settings, recipientEmail, subject, htmlConten
     const messageId = `<${row.id}.${Date.now()}@evlezzetlerimm.com>`;
     updateStmt.run(messageId, now, row.id);
     if (settings.brevoApiKey) {
-      sendViaBrevoRestApi(settings, row.recipient_email, row.subject, row.html_body, row.text_body).catch(()=>{});
+      inFlightEmailDeliveries.push(sendViaBrevoRestApi(settings, row.recipient_email, row.subject, row.html_body, row.text_body).catch(()=>{}));
     }
   }
   return pendingRows.length;
@@ -6978,6 +6984,7 @@ function createApp(db, options) {
   }
   async function handleRequest(req) {
     const res = await handleCoreRequest(req);
+    await flushInFlightEmailDeliveries();
     const method = req.method.toUpperCase();
     const url = new URL(req.url);
     if (syncEnabled && url.pathname.startsWith("/api/") && method !== "GET" && method !== "HEAD" && res.status >= 200 && res.status < 300) {
