@@ -2576,13 +2576,13 @@ export function renderIndexHtml(initialProducts: Array<Record<string, unknown>> 
 
           <div style="background:#f0fdf4;border:1px solid #bbf7d0;padding:12px 14px;border-radius:10px;margin:12px 0;font-size:13px;color:#166534;line-height:1.6;">
             <strong>✉️ Brevo Otomatik E-Posta Entegrasyonu Durumu:</strong>
-            \${cfg.brevoConfigured
+            \${(cfg.brevoConfigured || cfg.brevoApiKey)
               ? '<span class="status-badge status-DELIVERED">✅ Brevo API Aktif — Gerçek E-Posta Gönderiliyor</span>'
               : '<span class="status-badge status-PREPARING">⚙️ Brevo API Anahtarı Bekleniyor (Şu an Site İçi E-Posta Kutusu Aktif)</span>'
             }
             <div style="margin-top:6px;">
-              1️⃣ <strong>brevo.com</strong> adresinden ücretsiz hesap açıp <code>evlezzetlerimm@gmail.com</code> adresinizi <em>Senders (Göndericiler)</em> kısmından doğrulayın.<br/>
-              2️⃣ Sağ üst menüden <strong>SMTP & API → API Keys</strong> sekmesine girip <code>xkeysib-...</code> ile başlayan API anahtarınızı oluşturun ve yukarıdaki kutuya yapıştırıp kaydedin. Anında müşterilerin gerçek Gmail/Hotmail kutusuna otomatik sipariş ve IBAN mesajı gitmeye başlar!
+              1️⃣ <strong>brevo.com</strong> adresinden ücretsiz hesap açıp gönderici adresinizi <em>Senders (Göndericiler)</em> kısmından doğrulayın.<br/>
+              2️⃣ <strong>Çok Önemli (Bulut Sunucu İzni):</strong> <a href="https://app.brevo.com/security/authorised_ips" target="_blank" rel="noopener noreferrer" style="color:#15803d;font-weight:800;text-decoration:underline;">app.brevo.com/security/authorised_ips</a> adresine girip <strong>IP kısıtlamasını kapatın (Deactivate blocking)</strong>; böylece Vercel sunucuları her zaman e-posta gönderebilir.
             </div>
           </div>
 
